@@ -1069,13 +1069,13 @@ if not st.session_state.today_df.empty:
 
             if trend_df['항공권'].notna().any():
                 # 색상: 임계값 이상이면 빨강, 아니면 회색
-                colors = ['#D32F2F' if (p and p >= flight_threshold) else '#90A4AE'
+                colors = ['#D32F2F' if (pd.notna(p) and p and p >= flight_threshold) else '#90A4AE'
                           for p in trend_df['항공권']]
                 fig_flight.add_trace(go.Bar(
                     x=trend_df['날짜_dt'], y=trend_df['항공권'],
                     marker_color=colors,
                     name='항공권 최저가',
-                    text=[f"{int(p):,}" if p else "" for p in trend_df['항공권']],
+                    text=[f"{int(p):,}" if (pd.notna(p) and p) else "" for p in trend_df['항공권']],
                     textposition='outside'
                 ))
 
