@@ -1,12 +1,12 @@
 """
-🏨 Amber Command Center v2.0
+🏨 Amber Command Center v3.0
 엠버퓨어힐 통합 수익관리 시스템
 
-[2단계] 시뮬레이터 추가
+[3단계] 기회비용 분석 추가
 - 비밀번호 로그인
 - 잔여객실 파일 업로드
-- BAR 요금 현황 / 변화량 / 판도 변화
-- 🔮 시뮬레이터 탭 (시장 시그널 반영 BAR)
+- 🔮 시뮬레이터 탭
+- 💸 기회비용 분석 탭 ← 신규
 - Firebase 저장 & 엑셀 다운로드
 """
 
@@ -18,6 +18,8 @@ from firebase_admin import credentials, firestore
 import math
 import re
 import io
+import plotly.express as px
+import plotly.graph_objects as go
 
 # ============================================================
 # 1. 페이지 설정
@@ -52,11 +54,10 @@ if not check_password():
     st.stop()
 
 # ============================================================
-# 3. Firebase 초기화 (프로젝트 2개)
+# 3. Firebase 초기화
 # ============================================================
 existing_apps = [a.name for a in firebase_admin._apps.values()] if firebase_admin._apps else []
 
-# 호텔 예약용
 if "hotel_app" not in existing_apps:
     try:
         cred_h = credentials.Certificate(dict(st.secrets["firebase"]))
@@ -65,13 +66,12 @@ if "hotel_app" not in existing_apps:
         st.error(f"호텔 Firebase 연결 실패: {e}")
         st.stop()
 
-# 항공/경쟁사용
 if "flight_app" not in existing_apps:
     try:
         cred_f = credentials.Certificate(dict(st.secrets["firebase_flight"]))
         firebase_admin.initialize_app(cred_f, name="flight_app")
     except Exception as e:
-        st.warning(f"항공 Firebase 연결 실패 (시뮬레이터 기능 제한): {e}")
+        st.warning(f"항공 Firebase 연결 실패: {e}")
 
 try:
     db = firestore.client(app=firebase_admin.get_app("hotel_app"))
@@ -317,7 +317,64 @@ def get_market_price_for_date(target_date, df_flight, df_comp, search_date_str=N
     return josun_price, parnas_price, flight_price
 
 # ============================================================
-# 7. 기본 테이블 렌더러
+# 7. 기회비용 계산
+# ============================================================
+def calculate_opportunity_cost(current_df, df_flight, df_comp,
+                                josun_threshold, flight_threshold,
+                                search_date_str=None):
+    """날짜 × 객실타입별 기회비용 계산"""
+    records = []
+    dates = sorted(current_df['Date'].unique())
+
+    for d in dates:
+        josun_p, parnas_p, flight_p = get_market_price_for_date(d, df_flight, df_comp, search_date_str)
+        prev_week_date = d - timedelta(days=7)
+        josun_prev, _, _ = get_market_price_for_date(prev_week_date, df_flight, df_comp, search_date_str)
+
+        for rid in DYNAMIC_ROOMS:
+            curr_match = current_df[(current_df['RoomID'] == rid) & (current_df['Date'] == d)]
+            if curr_match.empty:
+                continue
+
+            avail = curr_match.iloc[0]['Available']
+            total = curr_match.iloc[0]['Total']
+
+            occ, real_bar, real_price, _ = get_final_values(rid, d, avail, total)
+            _, sim_bar, sim_price, boost, signal_str = get_sim_bar(
+                rid, d, avail, total,
+                josun_p, flight_p, parnas_p,
+                josun_threshold, flight_threshold,
+                josun_prev_price=josun_prev
+            )
+
+            try:
+                sold_rooms = max(0, float(total) - (float(avail) if pd.notna(avail) else 0))
+            except:
+                sold_rooms = 0
+
+            price_diff = sim_price - real_price
+            opp_cost = price_diff * sold_rooms
+
+            records.append({
+                '날짜': d,
+                '요일': WEEKDAYS_KR[d.weekday()],
+                '객실타입': rid,
+                '점유율(%)': round(occ, 1),
+                '판매객실수': int(sold_rooms),
+                '실제BAR': real_bar,
+                '실제단가': int(real_price),
+                '시뮬BAR': sim_bar,
+                '시뮬단가': int(sim_price),
+                '단가차이': int(price_diff),
+                '기회비용': int(opp_cost),
+                'BAR상승': boost,
+                '시그널': signal_str,
+            })
+
+    return pd.DataFrame(records)
+
+# ============================================================
+# 8. 기본 테이블 렌더러
 # ============================================================
 def render_master_table(current_df, prev_df, title="", mode="기준"):
     if current_df.empty:
@@ -402,7 +459,7 @@ def render_master_table(current_df, prev_df, title="", mode="기준"):
     return html
 
 # ============================================================
-# 8. 시뮬레이터 비교 테이블
+# 9. 시뮬레이터 테이블
 # ============================================================
 def render_sim_comparison_table(current_df, df_flight, df_comp,
                                  josun_threshold, flight_threshold,
@@ -490,7 +547,7 @@ def render_sim_comparison_table(current_df, df_flight, df_comp,
     return html
 
 # ============================================================
-# 9. 파일 파서
+# 10. 파일 파서
 # ============================================================
 def robust_date_parser(d_val):
     if pd.isna(d_val):
@@ -517,7 +574,7 @@ def get_latest_snapshot():
     return pd.DataFrame(), None
 
 # ============================================================
-# 10. 세션 초기화
+# 11. 세션 초기화
 # ============================================================
 if 'today_df' not in st.session_state:
     st.session_state.today_df = pd.DataFrame()
@@ -529,10 +586,10 @@ if 'compare_label' not in st.session_state:
 df_flight_all, df_comp_all = load_market_data()
 
 # ============================================================
-# 11. UI
+# 12. UI
 # ============================================================
 st.title("🏨 Amber Command Center")
-st.caption("v2.0 · 통합 수익관리 + 시뮬레이터")
+st.caption("v3.0 · 통합 수익관리 + 시뮬레이터 + 기회비용 분석")
 
 with st.sidebar:
     st.header("📅 과거 기록 조회")
@@ -574,7 +631,7 @@ with st.sidebar:
     st.divider()
 
     st.header("🎯 시뮬레이터 기준값")
-    st.caption("여기 값을 바꾸면 시뮬레이터가 즉시 갱신됩니다.")
+    st.caption("여기 값을 바꾸면 시뮬레이터·기회비용이 즉시 갱신됩니다.")
 
     josun_threshold = st.number_input(
         "그랜드 조선 임계가 (원)",
@@ -677,8 +734,9 @@ if not st.session_state.today_df.empty:
     if st.session_state.compare_label:
         st.info(f"ℹ️ {st.session_state.compare_label}")
 
-    tab1, tab2 = st.tabs(["📊 현황 & 요금관리", "🔮 시뮬레이터"])
+    tab1, tab2, tab3 = st.tabs(["📊 현황 & 요금관리", "🔮 시뮬레이터", "💸 기회비용 분석"])
 
+    # =============== TAB 1 ===============
     with tab1:
         st.markdown(render_master_table(curr, prev, title="📊 1. BAR 요금 현황", mode="기준"),
                     unsafe_allow_html=True)
@@ -718,6 +776,7 @@ if not st.session_state.today_df.empty:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
+    # =============== TAB 2 ===============
     with tab2:
         st.subheader("🔮 시장 시그널 반영 BAR 제안")
 
@@ -730,7 +789,7 @@ if not st.session_state.today_df.empty:
             st.info("⚠️ 둘 동시 → +2 | 조선 -15%↓ → 방어")
 
         if df_flight_all.empty and df_comp_all.empty:
-            st.warning("⚠️ 항공/경쟁사 데이터를 불러오지 못했습니다. (점유율 기반 기본 BAR만 표시)")
+            st.warning("⚠️ 항공/경쟁사 데이터를 불러오지 못했습니다.")
         else:
             market_status = []
             if not df_flight_all.empty:
@@ -770,24 +829,162 @@ if not st.session_state.today_df.empty:
             })
         st.dataframe(pd.DataFrame(signal_summary), use_container_width=True, hide_index=True)
 
-        st.divider()
-        with st.expander("💡 시뮬레이터는 어떻게 작동하나요?"):
+    # =============== TAB 3: 기회비용 ===============
+    with tab3:
+        st.subheader("💸 기회비용 누적 분석")
+        st.caption("시뮬레이터 제안대로 판매했다면 얼마를 더 벌 수 있었는지 계산합니다.")
+
+        # 기회비용 계산
+        opp_df = calculate_opportunity_cost(
+            curr, df_flight_all, df_comp_all,
+            josun_threshold, flight_threshold,
+            active_search_date
+        )
+
+        if opp_df.empty:
+            st.info("분석할 데이터가 없습니다.")
+        else:
+            total_opp = opp_df['기회비용'].sum()
+            positive_opp = opp_df[opp_df['기회비용'] > 0]['기회비용'].sum()
+            boosted_count = (opp_df['BAR상승'] > 0).sum()
+            avg_diff = opp_df[opp_df['기회비용'] > 0]['단가차이'].mean() if len(opp_df[opp_df['기회비용'] > 0]) > 0 else 0
+            days_affected = opp_df[opp_df['기회비용'] > 0]['날짜'].nunique()
+
+            # 상단 대시보드 (큰 금액 표시)
             st.markdown(f"""
-            **기본 원리**: 현재 시스템이 계산한 BAR(자사 점유율 기반)에 **시장 시그널을 더해** 제안 BAR을 만듭니다.
+            <div style='background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); 
+                        padding: 30px; border-radius: 15px; color: white; text-align: center; margin-bottom: 20px;'>
+                <div style='font-size: 16px; color: #80D8FF; margin-bottom: 10px;'>추정 추가 수익 (기회비용)</div>
+                <div style='font-size: 42px; font-weight: bold; color: #FFD700;'>
+                    ₩ {int(positive_opp):,}
+                </div>
+                <div style='font-size: 13px; color: #bbb; margin-top: 10px;'>
+                    시뮬레이터 제안 BAR로 판매했을 때 예상되는 추가 매출
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-            **시그널 규칙**:
-            - **그랜드 조선** 가격이 **{josun_threshold:,}원** 이상 → BAR 1단계 상향
-            - **항공권 최저가**가 **{flight_threshold:,}원** 이상 → BAR 1단계 상향
-            - 두 조건 동시 충족 → BAR 2단계 상향
-            - 조선이 전주 대비 15% 이상 **급락** → 방어 (상향 안 함)
+            # 보조 지표 4개
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("시그널 발동 건수", f"{boosted_count}건")
+            m2.metric("영향받은 날짜 수", f"{days_affected}일")
+            m3.metric("평균 단가 차이", f"₩{int(avg_diff):,}")
+            m4.metric("분석 객실타입", f"{opp_df['객실타입'].nunique()}개")
 
-            **색상 의미**:
-            - 🔴 빨간계열 = 실제 적용된 BAR (오늘 시스템에서 판매 중)
-            - 🔵 파란계열 = 시뮬레이터가 제안하는 BAR
-            - 🟡 금색 테두리 = 시그널 발동 (높여야 한다는 판단)
+            st.divider()
 
-            **파르나스는 참고용**입니다. 트리거로는 쓰이지 않지만 시장 천장을 보는 용도로 함께 표시됩니다.
-            """)
+            # 차트 1: 날짜별 기회비용 바 차트
+            st.subheader("📊 날짜별 기회비용")
+            daily_opp = opp_df.groupby(['날짜', '요일'])['기회비용'].sum().reset_index()
+            daily_opp['날짜_str'] = daily_opp['날짜'].apply(lambda x: x.strftime('%m-%d'))
+            daily_opp['라벨'] = daily_opp['날짜_str'] + '(' + daily_opp['요일'] + ')'
+
+            fig1 = px.bar(
+                daily_opp, x='라벨', y='기회비용',
+                color='기회비용',
+                color_continuous_scale=['#E8F5E9', '#FF5252'],
+                labels={'라벨': '날짜', '기회비용': '기회비용 (원)'}
+            )
+            fig1.update_layout(
+                template="plotly_white", height=400,
+                xaxis_tickangle=-45,
+                showlegend=False
+            )
+            st.plotly_chart(fig1, use_container_width=True)
+
+            # 차트 2: 객실타입별 기회비용 누적
+            st.subheader("🏨 객실타입별 기회비용 누적")
+            room_opp = opp_df.groupby('객실타입')['기회비용'].sum().reset_index().sort_values('기회비용', ascending=True)
+
+            fig2 = px.bar(
+                room_opp, x='기회비용', y='객실타입',
+                orientation='h',
+                color='기회비용',
+                color_continuous_scale=['#E8F5E9', '#FF5252'],
+                labels={'기회비용': '누적 기회비용 (원)', '객실타입': ''}
+            )
+            fig2.update_layout(
+                template="plotly_white", height=350,
+                showlegend=False
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+
+            st.divider()
+
+            # TOP 10
+            st.subheader("🔥 TOP 10 누수 케이스")
+            st.caption("가장 많은 기회비용이 발생한 날짜 × 객실 조합")
+
+            top10 = opp_df[opp_df['기회비용'] > 0].nlargest(10, '기회비용').copy()
+            top10['날짜'] = top10['날짜'].apply(lambda x: x.strftime('%Y-%m-%d'))
+            top10['실제단가'] = top10['실제단가'].apply(lambda x: f"₩{int(x):,}")
+            top10['시뮬단가'] = top10['시뮬단가'].apply(lambda x: f"₩{int(x):,}")
+            top10['단가차이'] = top10['단가차이'].apply(lambda x: f"+₩{int(x):,}")
+            top10['기회비용'] = top10['기회비용'].apply(lambda x: f"₩{int(x):,}")
+
+            display_cols = ['날짜', '요일', '객실타입', '판매객실수', '실제BAR', '실제단가',
+                            '시뮬BAR', '시뮬단가', '단가차이', '기회비용', '시그널']
+            st.dataframe(top10[display_cols], use_container_width=True, hide_index=True)
+
+            st.divider()
+
+            # 전체 상세
+            with st.expander("📋 전체 상세 기회비용 테이블"):
+                opp_display = opp_df.copy()
+                opp_display['날짜'] = opp_display['날짜'].apply(lambda x: x.strftime('%Y-%m-%d'))
+                opp_display['실제단가'] = opp_display['실제단가'].apply(lambda x: f"₩{int(x):,}")
+                opp_display['시뮬단가'] = opp_display['시뮬단가'].apply(lambda x: f"₩{int(x):,}")
+                opp_display['단가차이'] = opp_display['단가차이'].apply(lambda x: f"₩{int(x):,}")
+                opp_display['기회비용'] = opp_display['기회비용'].apply(lambda x: f"₩{int(x):,}")
+                st.dataframe(opp_display, use_container_width=True, hide_index=True)
+
+            # 엑셀 다운로드
+            def generate_opp_excel():
+                output = io.BytesIO()
+                with pd.ExcelWriter(output) as writer:
+                    opp_df.to_excel(writer, index=False, sheet_name='기회비용분석')
+                    # 요약 시트
+                    summary_df = pd.DataFrame({
+                        '항목': ['총 기회비용', '영향받은 날짜', '시그널 발동 건수', '평균 단가 차이', '조선 임계가', '항공 임계가'],
+                        '값': [
+                            f"₩{int(positive_opp):,}",
+                            f"{days_affected}일",
+                            f"{boosted_count}건",
+                            f"₩{int(avg_diff):,}",
+                            f"₩{josun_threshold:,}",
+                            f"₩{flight_threshold:,}"
+                        ]
+                    })
+                    summary_df.to_excel(writer, index=False, sheet_name='요약')
+                return output.getvalue()
+
+            st.download_button(
+                "📥 기회비용 분석 엑셀 다운로드",
+                data=generate_opp_excel(),
+                file_name=f"OppCost_{date.today().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            st.divider()
+            with st.expander("💡 기회비용은 어떻게 계산되나요?"):
+                st.markdown(f"""
+                **공식**: `(시뮬 단가 - 실제 단가) × 판매된 객실수 = 기회비용`
+
+                **예시**:
+                - 4/25 FDB 객실: 실제 BAR5 판매(445,000원)
+                - 시뮬 제안: BAR4 (502,000원) — 조선 40만 이상 시그널 발동
+                - 그 날 10실 판매됨
+                - 기회비용 = **10실 × 57,000원 = 570,000원**
+
+                **의미**:
+                - 이미 팔린 객실을 시뮬 가격으로 팔았다면 얼마나 더 벌었을지
+                - 점유율이 유지되는 조건이므로 보수적인 추정치
+                - 시그널 기준값을 조정하면 금액이 달라짐 (사이드바에서)
+
+                **현재 기준**:
+                - 조선 임계가: **{josun_threshold:,}원**
+                - 항공 임계가: **{flight_threshold:,}원**
+                """)
 
 else:
     st.info("👈 사이드바에서 잔여객실 파일을 업로드하거나 과거 기록을 불러오세요.")
@@ -795,13 +992,11 @@ else:
     ### 🎯 사용 방법
 
     1. **잔여객실 엑셀 파일 업로드** → 자동으로 최근 저장본과 비교
-    2. **📊 현황 탭** → 1단계의 기존 기능
+    2. **📊 현황 탭** → BAR 요금 현황 / 변화량 / 판도 변화
     3. **🔮 시뮬레이터 탭** → 시장 시그널 반영 BAR 제안
-       - 조선 40만원 / 항공 7만원 기준
-       - 사이드바에서 임계값 조정 가능
+    4. **💸 기회비용 탭** → 누수된 수익 금액 자동 계산
 
-    ### 🚀 다음 단계 (3단계 예정)
-    - 💸 기회비용 분석 (금액 누적)
-    - 📊 시장 트렌드 차트
-    - 📄 PDF 보고서
+    ### 🚀 다음 단계 (4단계 예정)
+    - 📊 시장 트렌드 차트 (경쟁사/항공 변화 추이)
+    - 📄 PDF 보고서 (회장님 보고용)
     """)
