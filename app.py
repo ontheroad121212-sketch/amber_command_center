@@ -1,13 +1,13 @@
 """
-🏨 Amber Command Center v3.0
+🏨 Amber Command Center v4.0
 엠버퓨어힐 통합 수익관리 시스템
 
-[3단계] 기회비용 분석 추가
+[4단계] 시장 트렌드 차트 추가
 - 비밀번호 로그인
-- 잔여객실 파일 업로드
-- 🔮 시뮬레이터 탭
-- 💸 기회비용 분석 탭 ← 신규
-- Firebase 저장 & 엑셀 다운로드
+- 📊 현황 & 요금관리
+- 🔮 시뮬레이터
+- 💸 기회비용 분석
+- 📈 시장 트렌드 ← 신규
 """
 
 import streamlit as st
@@ -322,7 +322,6 @@ def get_market_price_for_date(target_date, df_flight, df_comp, search_date_str=N
 def calculate_opportunity_cost(current_df, df_flight, df_comp,
                                 josun_threshold, flight_threshold,
                                 search_date_str=None):
-    """날짜 × 객실타입별 기회비용 계산"""
     records = []
     dates = sorted(current_df['Date'].unique())
 
@@ -374,7 +373,27 @@ def calculate_opportunity_cost(current_df, df_flight, df_comp,
     return pd.DataFrame(records)
 
 # ============================================================
-# 8. 기본 테이블 렌더러
+# 8. 우리(엠버) 가격 계산 (시스템 BAR 기준 평균 판매가)
+# ============================================================
+def get_our_avg_price_for_dates(current_df, target_dates):
+    """날짜별 시스템 BAR 기준 평균 판매가 (Dynamic 객실만)"""
+    result = {}
+    for d in target_dates:
+        prices = []
+        for rid in DYNAMIC_ROOMS:
+            curr_match = current_df[(current_df['RoomID'] == rid) & (current_df['Date'] == d)]
+            if curr_match.empty:
+                continue
+            avail = curr_match.iloc[0]['Available']
+            total = curr_match.iloc[0]['Total']
+            _, _, price, _ = get_final_values(rid, d, avail, total)
+            if price > 0:
+                prices.append(price)
+        result[d] = sum(prices) / len(prices) if prices else None
+    return result
+
+# ============================================================
+# 9. 기본 테이블 렌더러
 # ============================================================
 def render_master_table(current_df, prev_df, title="", mode="기준"):
     if current_df.empty:
@@ -459,7 +478,7 @@ def render_master_table(current_df, prev_df, title="", mode="기준"):
     return html
 
 # ============================================================
-# 9. 시뮬레이터 테이블
+# 10. 시뮬레이터 테이블
 # ============================================================
 def render_sim_comparison_table(current_df, df_flight, df_comp,
                                  josun_threshold, flight_threshold,
@@ -547,7 +566,7 @@ def render_sim_comparison_table(current_df, df_flight, df_comp,
     return html
 
 # ============================================================
-# 10. 파일 파서
+# 11. 파일 파서
 # ============================================================
 def robust_date_parser(d_val):
     if pd.isna(d_val):
@@ -574,7 +593,7 @@ def get_latest_snapshot():
     return pd.DataFrame(), None
 
 # ============================================================
-# 11. 세션 초기화
+# 12. 세션 초기화
 # ============================================================
 if 'today_df' not in st.session_state:
     st.session_state.today_df = pd.DataFrame()
@@ -586,10 +605,10 @@ if 'compare_label' not in st.session_state:
 df_flight_all, df_comp_all = load_market_data()
 
 # ============================================================
-# 12. UI
+# 13. UI
 # ============================================================
 st.title("🏨 Amber Command Center")
-st.caption("v3.0 · 통합 수익관리 + 시뮬레이터 + 기회비용 분석")
+st.caption("v4.0 · 수익관리 + 시뮬레이터 + 기회비용 + 시장 트렌드")
 
 with st.sidebar:
     st.header("📅 과거 기록 조회")
@@ -631,19 +650,17 @@ with st.sidebar:
     st.divider()
 
     st.header("🎯 시뮬레이터 기준값")
-    st.caption("여기 값을 바꾸면 시뮬레이터·기회비용이 즉시 갱신됩니다.")
+    st.caption("시뮬·기회비용·시장트렌드 차트에 반영됩니다.")
 
     josun_threshold = st.number_input(
         "그랜드 조선 임계가 (원)",
         min_value=100000, max_value=1000000,
-        value=400000, step=10000,
-        help="이 가격 이상이면 시장 강세 → BAR +1"
+        value=400000, step=10000
     )
     flight_threshold = st.number_input(
         "항공권 최저가 임계가 (원)",
         min_value=10000, max_value=300000,
-        value=70000, step=5000,
-        help="이 가격 이상이면 수요 강세 → BAR +1"
+        value=70000, step=5000
     )
 
     search_date_options = []
@@ -734,7 +751,12 @@ if not st.session_state.today_df.empty:
     if st.session_state.compare_label:
         st.info(f"ℹ️ {st.session_state.compare_label}")
 
-    tab1, tab2, tab3 = st.tabs(["📊 현황 & 요금관리", "🔮 시뮬레이터", "💸 기회비용 분석"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 현황 & 요금관리",
+        "🔮 시뮬레이터",
+        "💸 기회비용 분석",
+        "📈 시장 트렌드"
+    ])
 
     # =============== TAB 1 ===============
     with tab1:
@@ -776,7 +798,7 @@ if not st.session_state.today_df.empty:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-    # =============== TAB 2 ===============
+    # =============== TAB 2: 시뮬레이터 ===============
     with tab2:
         st.subheader("🔮 시장 시그널 반영 BAR 제안")
 
@@ -798,7 +820,7 @@ if not st.session_state.today_df.empty:
                 market_status.append(f"경쟁사 {len(df_comp_all):,}건")
             st.success(f"✅ 시장 데이터 로드: {' · '.join(market_status)}")
 
-        st.caption("🔴 실제 BAR (현재 시스템) | 🔵 시뮬 BAR (시장 반영 제안) | 🟡 테두리 = 상향 발동")
+        st.caption("🔴 실제 BAR | 🔵 시뮬 BAR | 🟡 테두리 = 상향 발동")
 
         sim_html = render_sim_comparison_table(
             curr, df_flight_all, df_comp_all,
@@ -834,7 +856,6 @@ if not st.session_state.today_df.empty:
         st.subheader("💸 기회비용 누적 분석")
         st.caption("시뮬레이터 제안대로 판매했다면 얼마를 더 벌 수 있었는지 계산합니다.")
 
-        # 기회비용 계산
         opp_df = calculate_opportunity_cost(
             curr, df_flight_all, df_comp_all,
             josun_threshold, flight_threshold,
@@ -850,7 +871,6 @@ if not st.session_state.today_df.empty:
             avg_diff = opp_df[opp_df['기회비용'] > 0]['단가차이'].mean() if len(opp_df[opp_df['기회비용'] > 0]) > 0 else 0
             days_affected = opp_df[opp_df['기회비용'] > 0]['날짜'].nunique()
 
-            # 상단 대시보드 (큰 금액 표시)
             st.markdown(f"""
             <div style='background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); 
                         padding: 30px; border-radius: 15px; color: white; text-align: center; margin-bottom: 20px;'>
@@ -864,7 +884,6 @@ if not st.session_state.today_df.empty:
             </div>
             """, unsafe_allow_html=True)
 
-            # 보조 지표 4개
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("시그널 발동 건수", f"{boosted_count}건")
             m2.metric("영향받은 날짜 수", f"{days_affected}일")
@@ -872,8 +891,6 @@ if not st.session_state.today_df.empty:
             m4.metric("분석 객실타입", f"{opp_df['객실타입'].nunique()}개")
 
             st.divider()
-
-            # 차트 1: 날짜별 기회비용 바 차트
             st.subheader("📊 날짜별 기회비용")
             daily_opp = opp_df.groupby(['날짜', '요일'])['기회비용'].sum().reset_index()
             daily_opp['날짜_str'] = daily_opp['날짜'].apply(lambda x: x.strftime('%m-%d'))
@@ -885,36 +902,21 @@ if not st.session_state.today_df.empty:
                 color_continuous_scale=['#E8F5E9', '#FF5252'],
                 labels={'라벨': '날짜', '기회비용': '기회비용 (원)'}
             )
-            fig1.update_layout(
-                template="plotly_white", height=400,
-                xaxis_tickangle=-45,
-                showlegend=False
-            )
+            fig1.update_layout(template="plotly_white", height=400, xaxis_tickangle=-45, showlegend=False)
             st.plotly_chart(fig1, use_container_width=True)
 
-            # 차트 2: 객실타입별 기회비용 누적
             st.subheader("🏨 객실타입별 기회비용 누적")
             room_opp = opp_df.groupby('객실타입')['기회비용'].sum().reset_index().sort_values('기회비용', ascending=True)
-
             fig2 = px.bar(
-                room_opp, x='기회비용', y='객실타입',
-                orientation='h',
-                color='기회비용',
-                color_continuous_scale=['#E8F5E9', '#FF5252'],
+                room_opp, x='기회비용', y='객실타입', orientation='h',
+                color='기회비용', color_continuous_scale=['#E8F5E9', '#FF5252'],
                 labels={'기회비용': '누적 기회비용 (원)', '객실타입': ''}
             )
-            fig2.update_layout(
-                template="plotly_white", height=350,
-                showlegend=False
-            )
+            fig2.update_layout(template="plotly_white", height=350, showlegend=False)
             st.plotly_chart(fig2, use_container_width=True)
 
             st.divider()
-
-            # TOP 10
             st.subheader("🔥 TOP 10 누수 케이스")
-            st.caption("가장 많은 기회비용이 발생한 날짜 × 객실 조합")
-
             top10 = opp_df[opp_df['기회비용'] > 0].nlargest(10, '기회비용').copy()
             top10['날짜'] = top10['날짜'].apply(lambda x: x.strftime('%Y-%m-%d'))
             top10['실제단가'] = top10['실제단가'].apply(lambda x: f"₩{int(x):,}")
@@ -927,8 +929,6 @@ if not st.session_state.today_df.empty:
             st.dataframe(top10[display_cols], use_container_width=True, hide_index=True)
 
             st.divider()
-
-            # 전체 상세
             with st.expander("📋 전체 상세 기회비용 테이블"):
                 opp_display = opp_df.copy()
                 opp_display['날짜'] = opp_display['날짜'].apply(lambda x: x.strftime('%Y-%m-%d'))
@@ -938,22 +938,14 @@ if not st.session_state.today_df.empty:
                 opp_display['기회비용'] = opp_display['기회비용'].apply(lambda x: f"₩{int(x):,}")
                 st.dataframe(opp_display, use_container_width=True, hide_index=True)
 
-            # 엑셀 다운로드
             def generate_opp_excel():
                 output = io.BytesIO()
                 with pd.ExcelWriter(output) as writer:
                     opp_df.to_excel(writer, index=False, sheet_name='기회비용분석')
-                    # 요약 시트
                     summary_df = pd.DataFrame({
                         '항목': ['총 기회비용', '영향받은 날짜', '시그널 발동 건수', '평균 단가 차이', '조선 임계가', '항공 임계가'],
-                        '값': [
-                            f"₩{int(positive_opp):,}",
-                            f"{days_affected}일",
-                            f"{boosted_count}건",
-                            f"₩{int(avg_diff):,}",
-                            f"₩{josun_threshold:,}",
-                            f"₩{flight_threshold:,}"
-                        ]
+                        '값': [f"₩{int(positive_opp):,}", f"{days_affected}일", f"{boosted_count}건",
+                               f"₩{int(avg_diff):,}", f"₩{josun_threshold:,}", f"₩{flight_threshold:,}"]
                     })
                     summary_df.to_excel(writer, index=False, sheet_name='요약')
                 return output.getvalue()
@@ -965,38 +957,226 @@ if not st.session_state.today_df.empty:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
+    # =============== TAB 4: 시장 트렌드 (NEW!) ===============
+    with tab4:
+        st.subheader("📈 시장 가격 트렌드")
+        st.caption("경쟁사·항공·우리(엠버) 가격을 날짜별로 시각화. 시그널이 왜 발동됐는지 한눈에 보입니다.")
+
+        if df_flight_all.empty and df_comp_all.empty:
+            st.warning("⚠️ 크롤링 데이터가 없습니다.")
+        else:
+            dates_list = sorted(curr['Date'].unique())
+
+            # 데이터 준비
+            trend_data = []
+            our_prices = get_our_avg_price_for_dates(curr, dates_list)
+
+            for d in dates_list:
+                josun_p, parnas_p, flight_p = get_market_price_for_date(
+                    d, df_flight_all, df_comp_all, active_search_date
+                )
+
+                # 크롤링된 Amber 가격
+                amber_crawl_p = None
+                if not df_comp_all.empty:
+                    c_row = df_comp_all[df_comp_all['date'] == d]
+                    if active_search_date and 'search_date_str' in c_row.columns:
+                        c_row = c_row[c_row['search_date_str'] == active_search_date]
+                    amber_rows = c_row[c_row['hotel_name'].str.contains('Amber', case=False, na=False)]
+                    if not amber_rows.empty:
+                        amber_crawl_p = amber_rows['price'].min()
+
+                trend_data.append({
+                    '날짜': d,
+                    '요일': WEEKDAYS_KR[d.weekday()],
+                    '그랜드조선': josun_p,
+                    '파르나스': parnas_p,
+                    '엠버_크롤링': amber_crawl_p,
+                    '엠버_시스템': our_prices.get(d),
+                    '항공권': flight_p,
+                })
+
+            trend_df = pd.DataFrame(trend_data)
+            trend_df['날짜_dt'] = pd.to_datetime(trend_df['날짜'])
+
+            # --------------- 차트 1: 호텔 가격 추이 ---------------
+            st.markdown("#### 🏨 경쟁사 & 엠버 가격 추이")
+            st.caption("빨간 점선 = 조선 임계가 | 🔴 엠버(크롤링) = OTA 노출가 | 🔵 엠버(시스템) = BAR 기준")
+
+            fig_hotel = go.Figure()
+
+            # 그랜드 조선
+            if trend_df['그랜드조선'].notna().any():
+                fig_hotel.add_trace(go.Scatter(
+                    x=trend_df['날짜_dt'], y=trend_df['그랜드조선'],
+                    mode='lines+markers', name='그랜드 조선',
+                    line=dict(color='#2E7D32', width=3),
+                    marker=dict(size=8)
+                ))
+
+            # 파르나스
+            if trend_df['파르나스'].notna().any():
+                fig_hotel.add_trace(go.Scatter(
+                    x=trend_df['날짜_dt'], y=trend_df['파르나스'],
+                    mode='lines+markers', name='파르나스 (참고)',
+                    line=dict(color='#9C27B0', width=2, dash='dot'),
+                    marker=dict(size=7)
+                ))
+
+            # 엠버 크롤링
+            if trend_df['엠버_크롤링'].notna().any():
+                fig_hotel.add_trace(go.Scatter(
+                    x=trend_df['날짜_dt'], y=trend_df['엠버_크롤링'],
+                    mode='lines+markers', name='엠버 (크롤링/OTA)',
+                    line=dict(color='#D32F2F', width=3),
+                    marker=dict(size=8, symbol='diamond')
+                ))
+
+            # 엠버 시스템
+            if trend_df['엠버_시스템'].notna().any():
+                fig_hotel.add_trace(go.Scatter(
+                    x=trend_df['날짜_dt'], y=trend_df['엠버_시스템'],
+                    mode='lines+markers', name='엠버 (시스템 BAR 평균)',
+                    line=dict(color='#1976D2', width=3),
+                    marker=dict(size=8, symbol='square')
+                ))
+
+            # 조선 임계선
+            fig_hotel.add_hline(
+                y=josun_threshold,
+                line=dict(color='red', width=1.5, dash='dash'),
+                annotation_text=f"조선 임계가 {josun_threshold:,}원",
+                annotation_position="top right",
+                annotation_font=dict(color='red', size=11)
+            )
+
+            fig_hotel.update_layout(
+                template="plotly_white",
+                height=500,
+                hovermode='x unified',
+                yaxis_title="가격 (원)",
+                xaxis_title="날짜",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            fig_hotel.update_yaxes(tickformat=",")
+            st.plotly_chart(fig_hotel, use_container_width=True)
+
+            # --------------- 차트 2: 항공권 추이 ---------------
+            st.markdown("#### ✈️ 김포-제주 항공권 최저가 추이")
+            st.caption(f"빨간 점선 = 항공 임계가 {flight_threshold:,}원")
+
+            fig_flight = go.Figure()
+
+            if trend_df['항공권'].notna().any():
+                # 색상: 임계값 이상이면 빨강, 아니면 회색
+                colors = ['#D32F2F' if (p and p >= flight_threshold) else '#90A4AE'
+                          for p in trend_df['항공권']]
+                fig_flight.add_trace(go.Bar(
+                    x=trend_df['날짜_dt'], y=trend_df['항공권'],
+                    marker_color=colors,
+                    name='항공권 최저가',
+                    text=[f"{int(p):,}" if p else "" for p in trend_df['항공권']],
+                    textposition='outside'
+                ))
+
+            fig_flight.add_hline(
+                y=flight_threshold,
+                line=dict(color='red', width=1.5, dash='dash'),
+                annotation_text=f"임계가 {flight_threshold:,}원",
+                annotation_position="top right",
+                annotation_font=dict(color='red', size=11)
+            )
+
+            fig_flight.update_layout(
+                template="plotly_white",
+                height=400,
+                yaxis_title="가격 (원)",
+                xaxis_title="날짜",
+                showlegend=False
+            )
+            fig_flight.update_yaxes(tickformat=",")
+            st.plotly_chart(fig_flight, use_container_width=True)
+
+            # --------------- 가격 포지셔닝 분석 ---------------
             st.divider()
-            with st.expander("💡 기회비용은 어떻게 계산되나요?"):
-                st.markdown(f"""
-                **공식**: `(시뮬 단가 - 실제 단가) × 판매된 객실수 = 기회비용`
+            st.markdown("#### 🎯 가격 포지셔닝 분석")
+            st.caption("우리가 시장에서 어디쯤 있는지 요약")
 
-                **예시**:
-                - 4/25 FDB 객실: 실제 BAR5 판매(445,000원)
-                - 시뮬 제안: BAR4 (502,000원) — 조선 40만 이상 시그널 발동
-                - 그 날 10실 판매됨
-                - 기회비용 = **10실 × 57,000원 = 570,000원**
+            if not trend_df.empty:
+                # 통계 계산
+                valid_josun = trend_df['그랜드조선'].dropna()
+                valid_amber_sys = trend_df['엠버_시스템'].dropna()
+                valid_amber_crawl = trend_df['엠버_크롤링'].dropna()
 
-                **의미**:
-                - 이미 팔린 객실을 시뮬 가격으로 팔았다면 얼마나 더 벌었을지
-                - 점유율이 유지되는 조건이므로 보수적인 추정치
-                - 시그널 기준값을 조정하면 금액이 달라짐 (사이드바에서)
+                avg_josun = valid_josun.mean() if not valid_josun.empty else 0
+                avg_amber_sys = valid_amber_sys.mean() if not valid_amber_sys.empty else 0
+                avg_amber_crawl = valid_amber_crawl.mean() if not valid_amber_crawl.empty else 0
 
-                **현재 기준**:
-                - 조선 임계가: **{josun_threshold:,}원**
-                - 항공 임계가: **{flight_threshold:,}원**
-                """)
+                col_p1, col_p2, col_p3 = st.columns(3)
+                with col_p1:
+                    st.metric("조선 평균가", f"₩{int(avg_josun):,}")
+                with col_p2:
+                    st.metric("엠버 시스템 평균가", f"₩{int(avg_amber_sys):,}",
+                              delta=f"조선 대비 {int(avg_amber_sys - avg_josun):+,}원")
+                with col_p3:
+                    if avg_amber_crawl > 0:
+                        st.metric("엠버 OTA 노출가", f"₩{int(avg_amber_crawl):,}",
+                                  delta=f"시스템 대비 {int(avg_amber_crawl - avg_amber_sys):+,}원")
+                    else:
+                        st.metric("엠버 OTA 노출가", "데이터 없음")
+
+                # 인사이트 텍스트
+                if avg_amber_sys > 0 and avg_josun > 0:
+                    gap_pct = (avg_amber_sys - avg_josun) / avg_josun * 100
+                    if gap_pct < -15:
+                        st.info(f"💡 **분석**: 엠버 시스템 가격이 조선보다 {abs(gap_pct):.0f}% 낮습니다. 시장 강세 구간에서 ADR 상향 여지가 큽니다.")
+                    elif gap_pct < 0:
+                        st.info(f"💡 **분석**: 엠버 시스템 가격이 조선보다 {abs(gap_pct):.0f}% 낮은 수준. 적정 프리미엄 포지셔닝 가능합니다.")
+                    else:
+                        st.success(f"💡 **분석**: 엠버 시스템 가격이 조선과 유사하거나 높은 수준. 프리미엄 포지셔닝 유지 중.")
+
+                if avg_amber_crawl > 0 and avg_amber_sys > 0:
+                    channel_gap = avg_amber_crawl - avg_amber_sys
+                    if abs(channel_gap) > 30000:
+                        st.warning(f"⚠️ **채널 가격 차이**: OTA 노출가와 시스템 가격이 {int(abs(channel_gap)):,}원 차이납니다. 채널 수수료·할인 구조 점검 필요.")
+
+            # --------------- 상세 데이터 ---------------
+            with st.expander("📋 상세 데이터 테이블"):
+                display_trend = trend_df.drop(columns=['날짜_dt']).copy()
+                display_trend['날짜'] = display_trend['날짜'].apply(lambda x: x.strftime('%Y-%m-%d'))
+                for col in ['그랜드조선', '파르나스', '엠버_크롤링', '엠버_시스템', '항공권']:
+                    display_trend[col] = display_trend[col].apply(
+                        lambda x: f"₩{int(x):,}" if pd.notna(x) and x > 0 else "-"
+                    )
+                st.dataframe(display_trend, use_container_width=True, hide_index=True)
+
+            # 엑셀 다운로드
+            def generate_trend_excel():
+                output = io.BytesIO()
+                export_df = trend_df.drop(columns=['날짜_dt']).copy()
+                export_df['날짜'] = export_df['날짜'].apply(lambda x: x.strftime('%Y-%m-%d'))
+                with pd.ExcelWriter(output) as writer:
+                    export_df.to_excel(writer, index=False, sheet_name='시장트렌드')
+                return output.getvalue()
+
+            st.download_button(
+                "📥 시장 트렌드 엑셀 다운로드",
+                data=generate_trend_excel(),
+                file_name=f"MarketTrend_{date.today().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 else:
     st.info("👈 사이드바에서 잔여객실 파일을 업로드하거나 과거 기록을 불러오세요.")
     st.markdown("""
     ### 🎯 사용 방법
 
-    1. **잔여객실 엑셀 파일 업로드** → 자동으로 최근 저장본과 비교
+    1. **잔여객실 엑셀 파일 업로드**
     2. **📊 현황 탭** → BAR 요금 현황 / 변화량 / 판도 변화
     3. **🔮 시뮬레이터 탭** → 시장 시그널 반영 BAR 제안
     4. **💸 기회비용 탭** → 누수된 수익 금액 자동 계산
+    5. **📈 시장 트렌드 탭** → 경쟁사·항공·엠버 가격 시각화
 
-    ### 🚀 다음 단계 (4단계 예정)
-    - 📊 시장 트렌드 차트 (경쟁사/항공 변화 추이)
+    ### 🚀 다음 단계 (마지막 5단계)
     - 📄 PDF 보고서 (회장님 보고용)
     """)
