@@ -1,13 +1,13 @@
 """
-🏨 Amber Command Center v4.0
+🏨 Amber Command Center v5.0 (FINAL)
 엠버퓨어힐 통합 수익관리 시스템
 
-[4단계] 시장 트렌드 차트 추가
-- 비밀번호 로그인
+[5단계] PDF 보고서 추가 + 4단계 버그 수정
 - 📊 현황 & 요금관리
 - 🔮 시뮬레이터
 - 💸 기회비용 분석
-- 📈 시장 트렌드 ← 신규
+- 📈 시장 트렌드 (NaN 버그 수정)
+- 📄 PDF 보고서 ← 신규
 """
 
 import streamlit as st
@@ -20,6 +20,8 @@ import re
 import io
 import plotly.express as px
 import plotly.graph_objects as go
+from fpdf import FPDF
+import calendar
 
 # ============================================================
 # 1. 페이지 설정
@@ -372,11 +374,7 @@ def calculate_opportunity_cost(current_df, df_flight, df_comp,
 
     return pd.DataFrame(records)
 
-# ============================================================
-# 8. 우리(엠버) 가격 계산 (시스템 BAR 기준 평균 판매가)
-# ============================================================
 def get_our_avg_price_for_dates(current_df, target_dates):
-    """날짜별 시스템 BAR 기준 평균 판매가 (Dynamic 객실만)"""
     result = {}
     for d in target_dates:
         prices = []
@@ -391,6 +389,256 @@ def get_our_avg_price_for_dates(current_df, target_dates):
                 prices.append(price)
         result[d] = sum(prices) / len(prices) if prices else None
     return result
+
+# ============================================================
+# 8. PDF 보고서 생성
+# ============================================================
+def generate_pdf_report(opp_df, trend_df, period_label,
+                         josun_threshold, flight_threshold,
+                         start_date, end_date):
+    """회장님 보고용 PDF 생성"""
+    pdf = FPDF()
+    pdf.set_margins(20, 20, 20)
+
+    # =========== 페이지 1: 표지 ===========
+    pdf.add_page()
+
+    # 네이비 배경
+    pdf.set_fill_color(26, 42, 68)
+    pdf.rect(0, 0, 210, 297, 'F')
+
+    # 골드 포인트 라인
+    pdf.set_fill_color(166, 138, 86)
+    pdf.rect(0, 95, 210, 4, 'F')
+
+    # 타이틀
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("helvetica", "B", 32)
+    pdf.set_xy(20, 115)
+    pdf.cell(0, 15, "AMBER PURE HILL", ln=True)
+
+    pdf.set_font("helvetica", "B", 18)
+    pdf.cell(0, 12, "Revenue Opportunity", ln=True)
+    pdf.cell(0, 12, "Analysis Report", ln=True)
+
+    # 기간 정보
+    pdf.set_font("helvetica", "", 11)
+    pdf.ln(50)
+    pdf.set_text_color(200, 200, 200)
+    pdf.cell(0, 8, f"PERIOD: {period_label}", ln=True, align='R')
+    pdf.cell(0, 8, f"REPORT DATE: {date.today().strftime('%Y-%m-%d')}", ln=True, align='R')
+    pdf.cell(0, 8, f"ANALYSIS RANGE: {start_date} ~ {end_date}", ln=True, align='R')
+
+    pdf.set_y(270)
+    pdf.set_font("helvetica", "I", 9)
+    pdf.set_text_color(166, 138, 86)
+    pdf.cell(0, 10, "CONFIDENTIAL | STRATEGIC REVENUE ANALYSIS", 0, 0, 'C')
+
+    # =========== 페이지 2: 핵심 요약 ===========
+    pdf.add_page()
+    pdf.set_text_color(26, 42, 68)
+    pdf.set_font("helvetica", "B", 20)
+    pdf.cell(0, 12, "01. EXECUTIVE SUMMARY", ln=True)
+    pdf.set_fill_color(166, 138, 86)
+    pdf.rect(20, 32, 30, 2, 'F')
+    pdf.ln(10)
+
+    if not opp_df.empty:
+        positive_opp = opp_df[opp_df['기회비용'] > 0]['기회비용'].sum()
+        boosted_count = (opp_df['BAR상승'] > 0).sum()
+        avg_diff = opp_df[opp_df['기회비용'] > 0]['단가차이'].mean() if len(opp_df[opp_df['기회비용'] > 0]) > 0 else 0
+        days_affected = opp_df[opp_df['기회비용'] > 0]['날짜'].nunique()
+
+        # 핵심 금액 박스
+        pdf.set_fill_color(248, 245, 240)
+        pdf.rect(20, pdf.get_y(), 170, 45, 'F')
+        pdf.set_xy(20, pdf.get_y() + 5)
+        pdf.set_font("helvetica", "", 11)
+        pdf.set_text_color(100, 100, 100)
+        pdf.cell(0, 8, "ESTIMATED ADDITIONAL REVENUE (Opportunity Cost)", ln=True, align='C')
+
+        pdf.set_font("helvetica", "B", 24)
+        pdf.set_text_color(166, 138, 86)
+        pdf.cell(0, 15, f"KRW {int(positive_opp):,}", ln=True, align='C')
+
+        pdf.set_font("helvetica", "I", 9)
+        pdf.set_text_color(120, 120, 120)
+        pdf.cell(0, 6, "Based on simulator-proposed BAR pricing", ln=True, align='C')
+        pdf.ln(15)
+
+        # KPI 테이블
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("helvetica", "B", 12)
+        pdf.set_fill_color(26, 42, 68)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(95, 10, "METRIC", 1, 0, 'C', True)
+        pdf.cell(75, 10, "VALUE", 1, 1, 'C', True)
+
+        pdf.set_font("helvetica", "", 11)
+        pdf.set_text_color(0, 0, 0)
+
+        rows = [
+            ("Signal Trigger Count", f"{boosted_count} cases"),
+            ("Days Affected", f"{days_affected} days"),
+            ("Avg. Price Gap per Room", f"KRW {int(avg_diff):,}"),
+            ("Analysis Period", period_label),
+            ("Josun Threshold", f"KRW {josun_threshold:,}"),
+            ("Flight Threshold", f"KRW {flight_threshold:,}"),
+        ]
+        fill_toggle = False
+        for label, val in rows:
+            if fill_toggle:
+                pdf.set_fill_color(248, 248, 248)
+                pdf.cell(95, 9, f"  {label}", 1, 0, 'L', True)
+                pdf.cell(75, 9, val, 1, 1, 'C', True)
+            else:
+                pdf.cell(95, 9, f"  {label}", 1)
+                pdf.cell(75, 9, val, 1, 1, 'C')
+            fill_toggle = not fill_toggle
+
+        # =========== 페이지 3: TOP 10 ===========
+        pdf.add_page()
+        pdf.set_text_color(26, 42, 68)
+        pdf.set_font("helvetica", "B", 20)
+        pdf.cell(0, 12, "02. TOP LOSS CASES", ln=True)
+        pdf.set_fill_color(166, 138, 86)
+        pdf.rect(20, 32, 30, 2, 'F')
+        pdf.ln(10)
+
+        pdf.set_font("helvetica", "", 10)
+        pdf.set_text_color(80, 80, 80)
+        pdf.multi_cell(0, 6, "The following cases show the highest opportunity cost during the analysis period. Each row represents one date + room type combination where the simulator would have proposed a higher BAR based on market signals.")
+        pdf.ln(5)
+
+        top10 = opp_df[opp_df['기회비용'] > 0].nlargest(10, '기회비용')
+
+        if not top10.empty:
+            pdf.set_font("helvetica", "B", 9)
+            pdf.set_fill_color(26, 42, 68)
+            pdf.set_text_color(255, 255, 255)
+            headers = [("Date", 25), ("Room", 15), ("Sold", 12), ("Real BAR", 18),
+                       ("Sim BAR", 18), ("Gap (KRW)", 25), ("Lost (KRW)", 30), ("Signal", 27)]
+            for h, w in headers:
+                pdf.cell(w, 9, h, 1, 0, 'C', True)
+            pdf.ln(9)
+
+            pdf.set_font("helvetica", "", 8)
+            pdf.set_text_color(0, 0, 0)
+            fill_toggle = False
+            for _, row in top10.iterrows():
+                if fill_toggle:
+                    pdf.set_fill_color(248, 248, 248)
+                    pdf.cell(25, 8, str(row['날짜']), 1, 0, 'C', True)
+                    pdf.cell(15, 8, row['객실타입'], 1, 0, 'C', True)
+                    pdf.cell(12, 8, str(int(row['판매객실수'])), 1, 0, 'C', True)
+                    pdf.cell(18, 8, row['실제BAR'], 1, 0, 'C', True)
+                    pdf.cell(18, 8, row['시뮬BAR'], 1, 0, 'C', True)
+                    pdf.cell(25, 8, f"+{int(row['단가차이']):,}", 1, 0, 'R', True)
+                    pdf.cell(30, 8, f"{int(row['기회비용']):,}", 1, 0, 'R', True)
+                    sig = str(row['시그널'])[:15]
+                    pdf.cell(27, 8, sig, 1, 1, 'C', True)
+                else:
+                    pdf.cell(25, 8, str(row['날짜']), 1, 0, 'C')
+                    pdf.cell(15, 8, row['객실타입'], 1, 0, 'C')
+                    pdf.cell(12, 8, str(int(row['판매객실수'])), 1, 0, 'C')
+                    pdf.cell(18, 8, row['실제BAR'], 1, 0, 'C')
+                    pdf.cell(18, 8, row['시뮬BAR'], 1, 0, 'C')
+                    pdf.cell(25, 8, f"+{int(row['단가차이']):,}", 1, 0, 'R')
+                    pdf.cell(30, 8, f"{int(row['기회비용']):,}", 1, 0, 'R')
+                    sig = str(row['시그널'])[:15]
+                    pdf.cell(27, 8, sig, 1, 1, 'C')
+                fill_toggle = not fill_toggle
+
+    # =========== 페이지 4: 방법론 및 제언 ===========
+    pdf.add_page()
+    pdf.set_text_color(26, 42, 68)
+    pdf.set_font("helvetica", "B", 20)
+    pdf.cell(0, 12, "03. METHODOLOGY", ln=True)
+    pdf.set_fill_color(166, 138, 86)
+    pdf.rect(20, 32, 30, 2, 'F')
+    pdf.ln(10)
+
+    pdf.set_font("helvetica", "B", 13)
+    pdf.set_text_color(166, 138, 86)
+    pdf.cell(0, 10, "Simulator Logic", ln=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("helvetica", "", 10)
+
+    method_text = (
+        "The simulator starts with the current system BAR (based on our own occupancy rate) and adjusts it "
+        "upward when external market signals indicate strong demand:\n\n"
+        f"- If Grand Josun price >= KRW {josun_threshold:,} : BAR +1 level\n"
+        f"- If Gimpo-Jeju flight lowest price >= KRW {flight_threshold:,} : BAR +1 level\n"
+        "- If both conditions met simultaneously : BAR +2 levels\n"
+        "- If Josun drops 15%+ week-over-week : defensive mode (no upward adjustment)\n\n"
+        "Opportunity cost is calculated as: (Simulator BAR price - Actual BAR price) x Rooms Sold"
+    )
+    pdf.multi_cell(0, 6, method_text)
+    pdf.ln(5)
+
+    pdf.set_font("helvetica", "B", 13)
+    pdf.set_text_color(166, 138, 86)
+    pdf.cell(0, 10, "Strategic Recommendation", ln=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("helvetica", "", 10)
+
+    recommendations = [
+        "1. Leverage competitor signals: When Josun raises prices above threshold, market accepts higher ADR.",
+        "2. Flight price as demand indicator: High airfares strongly correlate with inbound tourist demand.",
+        "3. Defensive strategy in downturns: Avoid unnecessary price cuts when market sentiment is weak.",
+        "4. Balance occupancy and ADR: Target 70-80% OCC with higher ADR rather than 90%+ OCC with low ADR.",
+        "5. Protect brand positioning: As a high-end resort, pricing below mid-tier competitors erodes brand equity."
+    ]
+    for rec in recommendations:
+        pdf.multi_cell(0, 6, rec)
+        pdf.ln(2)
+
+    # =========== 페이지 5: 결론 ===========
+    pdf.add_page()
+    pdf.set_text_color(26, 42, 68)
+    pdf.set_font("helvetica", "B", 20)
+    pdf.cell(0, 12, "04. CONCLUSION", ln=True)
+    pdf.set_fill_color(166, 138, 86)
+    pdf.rect(20, 32, 30, 2, 'F')
+    pdf.ln(15)
+
+    if not opp_df.empty:
+        positive_opp = opp_df[opp_df['기회비용'] > 0]['기회비용'].sum()
+
+        # 결론 박스
+        pdf.set_fill_color(26, 42, 68)
+        pdf.rect(20, pdf.get_y(), 170, 70, 'F')
+        pdf.set_xy(20, pdf.get_y() + 10)
+        pdf.set_font("helvetica", "B", 13)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(0, 8, "Total Opportunity Cost Identified", ln=True, align='C')
+
+        pdf.set_font("helvetica", "B", 32)
+        pdf.set_text_color(166, 138, 86)
+        pdf.cell(0, 20, f"KRW {int(positive_opp):,}", ln=True, align='C')
+
+        pdf.set_font("helvetica", "I", 10)
+        pdf.set_text_color(200, 200, 200)
+        pdf.multi_cell(0, 6, "Additional revenue that could have been realized\nif market signal-based pricing had been applied",
+                       align='C')
+        pdf.ln(20)
+
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("helvetica", "", 10)
+    pdf.multi_cell(0, 6,
+        "This report demonstrates that the current pricing system, while effective at maintaining "
+        "high occupancy, leaves significant revenue on the table during periods of market strength. "
+        "By incorporating external signals (competitor pricing, flight demand indicators), the hotel can "
+        "systematically capture higher ADR without sacrificing brand positioning or service quality."
+    )
+
+    # 푸터
+    pdf.set_y(275)
+    pdf.set_font("helvetica", "I", 8)
+    pdf.set_text_color(150, 150, 150)
+    pdf.cell(0, 10, "CONFIDENTIAL | AMBER PURE HILL | Strategic Revenue Analysis", 0, 0, 'C')
+
+    return bytes(pdf.output())
 
 # ============================================================
 # 9. 기본 테이블 렌더러
@@ -608,7 +856,7 @@ df_flight_all, df_comp_all = load_market_data()
 # 13. UI
 # ============================================================
 st.title("🏨 Amber Command Center")
-st.caption("v4.0 · 수익관리 + 시뮬레이터 + 기회비용 + 시장 트렌드")
+st.caption("v5.0 · 통합 수익관리 완성")
 
 with st.sidebar:
     st.header("📅 과거 기록 조회")
@@ -650,7 +898,7 @@ with st.sidebar:
     st.divider()
 
     st.header("🎯 시뮬레이터 기준값")
-    st.caption("시뮬·기회비용·시장트렌드 차트에 반영됩니다.")
+    st.caption("시뮬/기회비용/차트/PDF 모두에 반영됩니다.")
 
     josun_threshold = st.number_input(
         "그랜드 조선 임계가 (원)",
@@ -675,12 +923,10 @@ with st.sidebar:
     active_search_date = None if selected_search_date == "최신" else selected_search_date
 
     st.divider()
-
     st.header("📂 잔여객실 업로드")
     files = st.file_uploader("엑셀/CSV 파일", accept_multiple_files=True, type=['xlsx', 'xls', 'csv'])
 
     st.divider()
-
     if st.button("🚀 오늘 내역 저장", type="primary", use_container_width=True):
         if not st.session_state.today_df.empty:
             t_df = st.session_state.today_df.copy()
@@ -751,11 +997,12 @@ if not st.session_state.today_df.empty:
     if st.session_state.compare_label:
         st.info(f"ℹ️ {st.session_state.compare_label}")
 
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📊 현황 & 요금관리",
         "🔮 시뮬레이터",
         "💸 기회비용 분석",
-        "📈 시장 트렌드"
+        "📈 시장 트렌드",
+        "📄 PDF 보고서"
     ])
 
     # =============== TAB 1 ===============
@@ -798,7 +1045,7 @@ if not st.session_state.today_df.empty:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-    # =============== TAB 2: 시뮬레이터 ===============
+    # =============== TAB 2 ===============
     with tab2:
         st.subheader("🔮 시장 시그널 반영 BAR 제안")
 
@@ -865,7 +1112,6 @@ if not st.session_state.today_df.empty:
         if opp_df.empty:
             st.info("분석할 데이터가 없습니다.")
         else:
-            total_opp = opp_df['기회비용'].sum()
             positive_opp = opp_df[opp_df['기회비용'] > 0]['기회비용'].sum()
             boosted_count = (opp_df['BAR상승'] > 0).sum()
             avg_diff = opp_df[opp_df['기회비용'] > 0]['단가차이'].mean() if len(opp_df[opp_df['기회비용'] > 0]) > 0 else 0
@@ -957,17 +1203,16 @@ if not st.session_state.today_df.empty:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-    # =============== TAB 4: 시장 트렌드 (NEW!) ===============
+    # =============== TAB 4: 시장 트렌드 (버그 수정됨) ===============
     with tab4:
         st.subheader("📈 시장 가격 트렌드")
-        st.caption("경쟁사·항공·우리(엠버) 가격을 날짜별로 시각화. 시그널이 왜 발동됐는지 한눈에 보입니다.")
+        st.caption("경쟁사·항공·우리(엠버) 가격을 날짜별로 시각화.")
 
         if df_flight_all.empty and df_comp_all.empty:
             st.warning("⚠️ 크롤링 데이터가 없습니다.")
         else:
             dates_list = sorted(curr['Date'].unique())
 
-            # 데이터 준비
             trend_data = []
             our_prices = get_our_avg_price_for_dates(curr, dates_list)
 
@@ -975,8 +1220,6 @@ if not st.session_state.today_df.empty:
                 josun_p, parnas_p, flight_p = get_market_price_for_date(
                     d, df_flight_all, df_comp_all, active_search_date
                 )
-
-                # 크롤링된 Amber 가격
                 amber_crawl_p = None
                 if not df_comp_all.empty:
                     c_row = df_comp_all[df_comp_all['date'] == d]
@@ -999,49 +1242,36 @@ if not st.session_state.today_df.empty:
             trend_df = pd.DataFrame(trend_data)
             trend_df['날짜_dt'] = pd.to_datetime(trend_df['날짜'])
 
-            # --------------- 차트 1: 호텔 가격 추이 ---------------
             st.markdown("#### 🏨 경쟁사 & 엠버 가격 추이")
             st.caption("빨간 점선 = 조선 임계가 | 🔴 엠버(크롤링) = OTA 노출가 | 🔵 엠버(시스템) = BAR 기준")
 
             fig_hotel = go.Figure()
 
-            # 그랜드 조선
             if trend_df['그랜드조선'].notna().any():
                 fig_hotel.add_trace(go.Scatter(
                     x=trend_df['날짜_dt'], y=trend_df['그랜드조선'],
                     mode='lines+markers', name='그랜드 조선',
-                    line=dict(color='#2E7D32', width=3),
-                    marker=dict(size=8)
+                    line=dict(color='#2E7D32', width=3), marker=dict(size=8)
                 ))
-
-            # 파르나스
             if trend_df['파르나스'].notna().any():
                 fig_hotel.add_trace(go.Scatter(
                     x=trend_df['날짜_dt'], y=trend_df['파르나스'],
                     mode='lines+markers', name='파르나스 (참고)',
-                    line=dict(color='#9C27B0', width=2, dash='dot'),
-                    marker=dict(size=7)
+                    line=dict(color='#9C27B0', width=2, dash='dot'), marker=dict(size=7)
                 ))
-
-            # 엠버 크롤링
             if trend_df['엠버_크롤링'].notna().any():
                 fig_hotel.add_trace(go.Scatter(
                     x=trend_df['날짜_dt'], y=trend_df['엠버_크롤링'],
                     mode='lines+markers', name='엠버 (크롤링/OTA)',
-                    line=dict(color='#D32F2F', width=3),
-                    marker=dict(size=8, symbol='diamond')
+                    line=dict(color='#D32F2F', width=3), marker=dict(size=8, symbol='diamond')
                 ))
-
-            # 엠버 시스템
             if trend_df['엠버_시스템'].notna().any():
                 fig_hotel.add_trace(go.Scatter(
                     x=trend_df['날짜_dt'], y=trend_df['엠버_시스템'],
                     mode='lines+markers', name='엠버 (시스템 BAR 평균)',
-                    line=dict(color='#1976D2', width=3),
-                    marker=dict(size=8, symbol='square')
+                    line=dict(color='#1976D2', width=3), marker=dict(size=8, symbol='square')
                 ))
 
-            # 조선 임계선
             fig_hotel.add_hline(
                 y=josun_threshold,
                 line=dict(color='red', width=1.5, dash='dash'),
@@ -1051,24 +1281,20 @@ if not st.session_state.today_df.empty:
             )
 
             fig_hotel.update_layout(
-                template="plotly_white",
-                height=500,
-                hovermode='x unified',
-                yaxis_title="가격 (원)",
-                xaxis_title="날짜",
+                template="plotly_white", height=500, hovermode='x unified',
+                yaxis_title="가격 (원)", xaxis_title="날짜",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             fig_hotel.update_yaxes(tickformat=",")
             st.plotly_chart(fig_hotel, use_container_width=True)
 
-            # --------------- 차트 2: 항공권 추이 ---------------
+            # ✅ 버그 수정: NaN 안전하게 처리
             st.markdown("#### ✈️ 김포-제주 항공권 최저가 추이")
             st.caption(f"빨간 점선 = 항공 임계가 {flight_threshold:,}원")
 
             fig_flight = go.Figure()
 
             if trend_df['항공권'].notna().any():
-                # 색상: 임계값 이상이면 빨강, 아니면 회색
                 colors = ['#D32F2F' if (pd.notna(p) and p and p >= flight_threshold) else '#90A4AE'
                           for p in trend_df['항공권']]
                 fig_flight.add_trace(go.Bar(
@@ -1088,22 +1314,17 @@ if not st.session_state.today_df.empty:
             )
 
             fig_flight.update_layout(
-                template="plotly_white",
-                height=400,
-                yaxis_title="가격 (원)",
-                xaxis_title="날짜",
+                template="plotly_white", height=400,
+                yaxis_title="가격 (원)", xaxis_title="날짜",
                 showlegend=False
             )
             fig_flight.update_yaxes(tickformat=",")
             st.plotly_chart(fig_flight, use_container_width=True)
 
-            # --------------- 가격 포지셔닝 분석 ---------------
             st.divider()
             st.markdown("#### 🎯 가격 포지셔닝 분석")
-            st.caption("우리가 시장에서 어디쯤 있는지 요약")
 
             if not trend_df.empty:
-                # 통계 계산
                 valid_josun = trend_df['그랜드조선'].dropna()
                 valid_amber_sys = trend_df['엠버_시스템'].dropna()
                 valid_amber_crawl = trend_df['엠버_크롤링'].dropna()
@@ -1125,7 +1346,6 @@ if not st.session_state.today_df.empty:
                     else:
                         st.metric("엠버 OTA 노출가", "데이터 없음")
 
-                # 인사이트 텍스트
                 if avg_amber_sys > 0 and avg_josun > 0:
                     gap_pct = (avg_amber_sys - avg_josun) / avg_josun * 100
                     if gap_pct < -15:
@@ -1140,7 +1360,6 @@ if not st.session_state.today_df.empty:
                     if abs(channel_gap) > 30000:
                         st.warning(f"⚠️ **채널 가격 차이**: OTA 노출가와 시스템 가격이 {int(abs(channel_gap)):,}원 차이납니다. 채널 수수료·할인 구조 점검 필요.")
 
-            # --------------- 상세 데이터 ---------------
             with st.expander("📋 상세 데이터 테이블"):
                 display_trend = trend_df.drop(columns=['날짜_dt']).copy()
                 display_trend['날짜'] = display_trend['날짜'].apply(lambda x: x.strftime('%Y-%m-%d'))
@@ -1150,33 +1369,156 @@ if not st.session_state.today_df.empty:
                     )
                 st.dataframe(display_trend, use_container_width=True, hide_index=True)
 
-            # 엑셀 다운로드
-            def generate_trend_excel():
-                output = io.BytesIO()
-                export_df = trend_df.drop(columns=['날짜_dt']).copy()
-                export_df['날짜'] = export_df['날짜'].apply(lambda x: x.strftime('%Y-%m-%d'))
-                with pd.ExcelWriter(output) as writer:
-                    export_df.to_excel(writer, index=False, sheet_name='시장트렌드')
-                return output.getvalue()
+    # =============== TAB 5: PDF 보고서 (NEW!) ===============
+    with tab5:
+        st.subheader("📄 회장님 보고용 PDF 리포트")
+        st.caption("스트림릿 주소 노출 없이 PDF 파일로만 전달 가능합니다.")
 
-            st.download_button(
-                "📥 시장 트렌드 엑셀 다운로드",
-                data=generate_trend_excel(),
-                file_name=f"MarketTrend_{date.today().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        st.info("💡 **보고 기간을 먼저 선택**하세요. 선택한 기간의 데이터만 PDF에 포함됩니다.")
+
+        # 기간 선택
+        period_mode = st.radio(
+            "기간 선택 방식",
+            ["📅 월별 (예: 4월 보고서)", "📆 전체 기간 (로드된 데이터 전부)", "🎯 커스텀 기간 (직접 지정)"],
+            horizontal=True
+        )
+
+        all_dates = sorted(curr['Date'].unique())
+        data_min = min(all_dates)
+        data_max = max(all_dates)
+
+        # 기간 결정
+        if period_mode == "📅 월별 (예: 4월 보고서)":
+            available_months = sorted(set((d.year, d.month) for d in all_dates))
+            month_options = [f"{y}년 {m}월" for y, m in available_months]
+
+            if not month_options:
+                st.warning("데이터가 없습니다.")
+                st.stop()
+
+            selected_month_str = st.selectbox("보고 월 선택", month_options)
+            sel_year = int(selected_month_str.split("년")[0])
+            sel_month = int(selected_month_str.split("년")[1].replace("월", "").strip())
+
+            _, last_day = calendar.monthrange(sel_year, sel_month)
+            pdf_start = date(sel_year, sel_month, 1)
+            pdf_end = date(sel_year, sel_month, last_day)
+
+            # 데이터 범위 내로 조정
+            if pdf_start < data_min:
+                pdf_start = data_min
+            if pdf_end > data_max:
+                pdf_end = data_max
+
+            period_label = f"{sel_year}년 {sel_month}월"
+
+        elif period_mode == "📆 전체 기간 (로드된 데이터 전부)":
+            pdf_start = data_min
+            pdf_end = data_max
+            period_label = f"{pdf_start.strftime('%Y-%m-%d')} ~ {pdf_end.strftime('%Y-%m-%d')}"
+
+        else:  # 커스텀
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                pdf_start = st.date_input("시작일", value=data_min, min_value=data_min, max_value=data_max)
+            with col_c2:
+                pdf_end = st.date_input("종료일", value=data_max, min_value=data_min, max_value=data_max)
+            period_label = f"{pdf_start.strftime('%Y-%m-%d')} ~ {pdf_end.strftime('%Y-%m-%d')}"
+
+        st.divider()
+
+        # 기간별 데이터 필터링
+        filtered_curr = curr[(curr['Date'] >= pdf_start) & (curr['Date'] <= pdf_end)]
+
+        if filtered_curr.empty:
+            st.warning("⚠️ 해당 기간에 데이터가 없습니다.")
+        else:
+            # 미리보기
+            st.markdown("### 📋 보고서 미리보기")
+
+            preview_opp = calculate_opportunity_cost(
+                filtered_curr, df_flight_all, df_comp_all,
+                josun_threshold, flight_threshold,
+                active_search_date
             )
+
+            if not preview_opp.empty:
+                prev_positive = preview_opp[preview_opp['기회비용'] > 0]['기회비용'].sum()
+                prev_boosted = (preview_opp['BAR상승'] > 0).sum()
+                prev_days = preview_opp[preview_opp['기회비용'] > 0]['날짜'].nunique()
+
+                col_p1, col_p2, col_p3 = st.columns(3)
+                col_p1.metric("📅 보고 기간", period_label)
+                col_p2.metric("💰 추정 추가 수익", f"₩{int(prev_positive):,}")
+                col_p3.metric("🚨 시그널 발동", f"{prev_boosted}건 / {prev_days}일")
+
+                st.markdown("---")
+                st.markdown("**보고서 구성**")
+                st.markdown("""
+                - **표지**: 브랜드 + 기간
+                - **페이지 2**: 핵심 요약 (추가 수익 금액 + KPI)
+                - **페이지 3**: TOP 10 누수 케이스
+                - **페이지 4**: 시뮬레이터 방법론 + 전략 제언
+                - **페이지 5**: 결론 (총 기회비용)
+                """)
+
+                st.divider()
+
+                # PDF 생성 버튼
+                if st.button("📄 PDF 생성하기", type="primary", use_container_width=True):
+                    with st.spinner("PDF 생성 중..."):
+                        try:
+                            pdf_bytes = generate_pdf_report(
+                                preview_opp, None, period_label,
+                                josun_threshold, flight_threshold,
+                                pdf_start.strftime('%Y-%m-%d'),
+                                pdf_end.strftime('%Y-%m-%d')
+                            )
+
+                            file_label = period_label.replace(" ", "_").replace("년", "").replace("월", "")
+                            st.download_button(
+                                "📥 PDF 다운로드",
+                                data=pdf_bytes,
+                                file_name=f"Amber_RevenueReport_{file_label}_{date.today().strftime('%Y%m%d')}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
+                            st.success("✅ PDF 생성 완료! 위 버튼을 클릭해 다운로드하세요.")
+                        except Exception as e:
+                            st.error(f"PDF 생성 실패: {e}")
+            else:
+                st.warning("선택한 기간에 분석 가능한 데이터가 없습니다.")
+
+        with st.expander("💡 PDF 보고서 활용 팁"):
+            st.markdown("""
+            **이 PDF는 이런 상황에 쓰세요:**
+            - 회장님께 월간 정기 보고
+            - 총지배인과의 전략 미팅
+            - 부총지배인과의 내부 공유
+            
+            **주의사항:**
+            - 스트림릿 주소는 절대 공유하지 마세요
+            - PDF는 파일로만 전달 (이메일, 출력물)
+            - 임계값을 바꾸면 금액이 달라지므로, 보고 전 기준값 확인 필수
+            
+            **설득 포인트:**
+            1. 표지의 **큰 금색 금액** → 임팩트
+            2. TOP 10 케이스 → **구체적 근거**
+            3. 방법론 → **논리적 합리성**
+            4. 결론 → **행동 필요성**
+            """)
 
 else:
     st.info("👈 사이드바에서 잔여객실 파일을 업로드하거나 과거 기록을 불러오세요.")
     st.markdown("""
-    ### 🎯 사용 방법
+    ### 🎯 5단계 완성 시스템
 
-    1. **잔여객실 엑셀 파일 업로드**
-    2. **📊 현황 탭** → BAR 요금 현황 / 변화량 / 판도 변화
-    3. **🔮 시뮬레이터 탭** → 시장 시그널 반영 BAR 제안
-    4. **💸 기회비용 탭** → 누수된 수익 금액 자동 계산
-    5. **📈 시장 트렌드 탭** → 경쟁사·항공·엠버 가격 시각화
+    1. **📊 현황 탭** → BAR 요금 현황 / 변화량 / 판도 변화
+    2. **🔮 시뮬레이터 탭** → 시장 시그널 반영 BAR 제안
+    3. **💸 기회비용 탭** → 누수된 수익 금액 자동 계산
+    4. **📈 시장 트렌드 탭** → 경쟁사·항공·엠버 가격 시각화
+    5. **📄 PDF 보고서 탭** → 회장님 보고용 리포트 출력
 
-    ### 🚀 다음 단계 (마지막 5단계)
-    - 📄 PDF 보고서 (회장님 보고용)
+    ### 🎉 완성!
+    이제 본인 전용 수익관리 시뮬레이터가 완성되었습니다.
     """)
