@@ -962,12 +962,11 @@ def render_master_table(current_df, prev_df, title="", mode="기준"):
                     _, prev_bar, _, _ = get_final_values(rid, d, prev_avail, prev_m.iloc[0]['Total'])
             style = f"border:1px solid #ddd; padding:{row_padding}; text-align:center; background-color:white;"
             if mode == "기준":
+                bg = BAR_GRADIENT_COLORS.get(bar, "#FFFFFF") if rid in DYNAMIC_ROOMS or bar == "BAR0" else "#F1F1F1"
+                style += f"background-color: {bg};"
                 if is_past:
-                    style += "background-color: #F5F5F5; color:#888; opacity:0.7;"
-                    content = f"<b>{bar}</b><br>{base_price:,}<br>{occ:.0f}%<br><span style='font-size:8px;'>(마감)</span>"
+                    content = f"<b>{bar}</b><br>{base_price:,}<br>{occ:.0f}%<br><span style='font-size:8px; color:#666;'>📜마감</span>"
                 else:
-                    bg = BAR_GRADIENT_COLORS.get(bar, "#FFFFFF") if rid in DYNAMIC_ROOMS or bar == "BAR0" else "#F1F1F1"
-                    style += f"background-color: {bg};"
                     content = f"<b>{bar}</b><br>{base_price:,}<br>{occ:.0f}%"
             elif mode == "변화":
                 curr_av = float(avail) if pd.notna(avail) else 0.0
@@ -1070,22 +1069,25 @@ def render_sim_comparison_table(current_df, df_flight, df_comp,
                 josun_prev_price=josun_prev, events=events, sensitivity=sensitivity
             )
 
-            if is_past:
-                real_style = "border:1px solid #ddd; padding:5px; text-align:center; background:#F5F5F5; color:#888; font-size:11px;"
-                sim_style = "border:1px solid #ddd; padding:5px; text-align:center; background:#E8E8E8; color:#888; font-size:11px;"
-                real_content = f"<b>{real_bar}</b><br><span style='font-size:10px;'>{real_price:,}</span><br><span style='font-size:8px;'>마감</span>"
-                sim_content = f"<b>{sim_bar}</b><br><span style='font-size:10px;'>{sim_price:,}</span><br><span style='font-size:8px;'>마감</span>"
+            # 색은 원래대로 유지, 과거는 작게 표시만
+            real_bg = BAR_GRADIENT_COLORS.get(real_bar, "#fff")
+            real_style = f"border:1px solid #ddd; padding:5px; text-align:center; background:{real_bg}; font-size:11px;"
+            sim_bg = SIM_BAR_COLORS.get(sim_bar, "#fff")
+            diff = sim_price - real_price
+            sim_style = f"border:1px solid #ddd; padding:5px; text-align:center; background:{sim_bg}; color:white; font-size:11px;"
+
+            if boost > 0:
+                sim_style += "border:2px solid #FFD700;"
+                diff_txt = f"<span style='color:#FFD700; font-size:9px;'>+{boost}단계 +{diff:,}</span>"
             else:
-                real_bg = BAR_GRADIENT_COLORS.get(real_bar, "#fff")
-                real_style = f"border:1px solid #ddd; padding:5px; text-align:center; background:{real_bg}; font-size:11px;"
+                diff_txt = ""
+
+            if is_past:
+                # 과거: 색은 유지, 📜 아이콘만 추가
+                real_content = f"<b>{real_bar}</b><br><span style='font-size:10px;'>{real_price:,}</span><br><span style='font-size:8px; color:#555;'>📜</span>"
+                sim_content = f"<b>{sim_bar}</b><br><span style='font-size:10px;'>{sim_price:,}</span><br>{diff_txt if diff_txt else '<span style=\"font-size:8px; color:#FFD700;\">📜</span>'}"
+            else:
                 real_content = f"<b>{real_bar}</b><br><span style='font-size:10px;'>{real_price:,}</span>"
-                sim_bg = SIM_BAR_COLORS.get(sim_bar, "#fff")
-                diff = sim_price - real_price
-                sim_style = f"border:1px solid #ddd; padding:5px; text-align:center; background:{sim_bg}; color:white; font-size:11px;"
-                if boost > 0:
-                    sim_style += "border:2px solid #FFD700;"
-                    diff_txt = f"<span style='color:#FFD700; font-size:9px;'>+{boost}단계 +{diff:,}</span>"
-                else: diff_txt = ""
                 sim_content = f"<b>{sim_bar}</b><br><span style='font-size:10px;'>{sim_price:,}</span><br>{diff_txt}"
 
             html += f"<td style='{real_style}'>{real_content}</td>"
