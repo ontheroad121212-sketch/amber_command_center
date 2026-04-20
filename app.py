@@ -1105,19 +1105,39 @@ def _fig_to_image_bytes(fig, width=800, height=400):
     """Plotly 차트를 PNG 바이트로 변환"""
     try:
         return fig.to_image(format="png", width=width, height=height, scale=2)
-    except Exception as e:
+    except Exception:
         return None
+
+def _safe_multicell(pdf, w, h, text, max_chars_per_line=None):
+    """안전한 multi_cell - 너비 부족 에러 방지"""
+    try:
+        pdf.multi_cell(w, h, text)
+    except Exception:
+        # 공간 부족 시 폰트 줄이고 재시도
+        current_size = pdf.font_size_pt
+        try:
+            pdf.set_font_size(max(7, current_size - 2))
+            pdf.multi_cell(w, h, text)
+            pdf.set_font_size(current_size)
+        except Exception:
+            # 그래도 실패하면 텍스트 자르기
+            pdf.set_font_size(current_size)
+            short_text = text[:100] + "..." if len(text) > 100 else text
+            try:
+                pdf.multi_cell(w, h, short_text)
+            except:
+                pass
 
 def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
                          start_date, end_date, curr_df=None, df_flight=None, df_comp=None,
                          events=None, sensitivity=None, active_search_date=None,
                          snapshots_list=None):
-    """🎯 고급 컨설팅 수준 PDF 보고서"""
+    """고급 컨설팅 수준 PDF 보고서 (안전 버전)"""
     pdf = FPDF()
     pdf.set_margins(20, 20, 20)
-    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.set_auto_page_break(auto=True, margin=25)
 
-    # 🎯 한글 폰트 로드
+    # 한글 폰트 로드
     font_path = "NanumGothic.ttf"
     font_loaded = False
     if os.path.exists(font_path):
@@ -1129,7 +1149,6 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
             font_loaded = False
     KFONT = 'NanumGothic' if font_loaded else 'helvetica'
 
-    # 안전 텍스트 함수 (폰트 없을 때 영문으로)
     def T(ko, en):
         return ko if font_loaded else en
 
@@ -1148,7 +1167,7 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
     pdf.set_font(KFONT, '', 12)
     pdf.ln(5)
     pdf.set_text_color(200, 200, 200)
-    pdf.cell(0, 8, T("Strategic Revenue Management Analysis", "Strategic Revenue Management"), ln=True)
+    pdf.cell(0, 8, "Strategic Revenue Management", ln=True)
     pdf.ln(40)
     pdf.set_font(KFONT, '', 11)
     pdf.cell(0, 8, T(f"기간: {period_label}", f"Period: {period_label}"), ln=True, align='R')
@@ -1159,7 +1178,7 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
     pdf.set_y(270)
     pdf.set_font(KFONT, '', 9)
     pdf.set_text_color(166, 138, 86)
-    pdf.cell(0, 10, T("대외비 | 전략 수익 분석 보고서", "CONFIDENTIAL"), 0, 0, 'C')
+    pdf.cell(0, 10, T("대외비 - 전략 수익 분석 보고서", "CONFIDENTIAL"), 0, 0, 'C')
 
     # ============ 페이지 2: 핵심 요약 ============
     pdf.add_page()
@@ -1176,7 +1195,6 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
         avg_diff = opp_df[opp_df['기회비용'] > 0]['단가차이'].mean() if len(opp_df[opp_df['기회비용'] > 0]) > 0 else 0
         days_affected = opp_df[opp_df['기회비용'] > 0]['날짜'].nunique()
 
-        # 핵심 금액 박스
         pdf.set_fill_color(248, 245, 240)
         pdf.rect(20, pdf.get_y(), 170, 50, 'F')
         pdf.set_xy(20, pdf.get_y() + 5)
@@ -1188,8 +1206,8 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
         pdf.cell(0, 18, f"KRW {int(positive_opp):,}", ln=True, align='C')
         pdf.set_font(KFONT, '', 10)
         pdf.set_text_color(120, 120, 120)
-        pdf.cell(0, 6, T("현재 가격 정책 하에서 포착되지 않은 수익 기회",
-                          "Revenue opportunity not captured under current pricing"), ln=True, align='C')
+        pdf.cell(0, 6, T("현재 가격 정책에서 포착되지 않은 수익 기회",
+                          "Revenue opportunity not captured"), ln=True, align='C')
         pdf.ln(15)
 
         # KPI 테이블
@@ -1202,44 +1220,41 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
         pdf.set_font(KFONT, '', 10)
         pdf.set_text_color(0, 0, 0)
         rows_data = [
-            (T("시그널 발동 건수", "Signal Triggers"), f"{boosted_count} {T('건', 'cases')}"),
-            (T("영향 받은 날짜", "Days Affected"), f"{days_affected} {T('일', 'days')}"),
+            (T("시그널 발동 건수", "Signal Triggers"), f"{boosted_count}"),
+            (T("영향 받은 날짜", "Days Affected"), f"{days_affected}"),
             (T("건당 평균 단가 차이", "Avg Price Gap"), f"KRW {int(avg_diff):,}"),
             (T("분석 기간", "Period"), period_label),
-            (T("조선 임계가 설정", "Josun Threshold"), f"KRW {josun_threshold:,}"),
-            (T("항공 임계가 설정", "Flight Threshold"), f"KRW {flight_threshold:,}"),
+            (T("조선 임계가", "Josun Threshold"), f"KRW {josun_threshold:,}"),
+            (T("항공 임계가", "Flight Threshold"), f"KRW {flight_threshold:,}"),
         ]
         fill_toggle = False
         for label, val in rows_data:
             fill = fill_toggle
             if fill: pdf.set_fill_color(248, 248, 248)
             pdf.cell(95, 8, f"  {label}", 1, 0, 'L', fill)
-            pdf.cell(75, 8, val, 1, 1, 'C', fill)
+            pdf.cell(75, 8, str(val), 1, 1, 'C', fill)
             fill_toggle = not fill_toggle
 
         pdf.ln(8)
 
-        # 핵심 메시지 박스
+        # 핵심 메시지
         pdf.set_fill_color(255, 243, 224)
         y_box = pdf.get_y()
         pdf.rect(20, y_box, 170, 35, 'F')
         pdf.set_xy(25, y_box + 5)
         pdf.set_font(KFONT, 'B', 11)
         pdf.set_text_color(166, 138, 86)
-        pdf.cell(0, 7, T("핵심 메시지", "Key Message"), ln=True)
+        pdf.cell(0, 7, T("[ 핵심 메시지 ]", "[ Key Message ]"), ln=True)
         pdf.set_xy(25, pdf.get_y() + 1)
-        pdf.set_font(KFONT, '', 10)
+        pdf.set_font(KFONT, '', 9)
         pdf.set_text_color(60, 60, 60)
         key_msg = T(
-            f"현재 점유율 중심 가격 정책 하에서 총 {days_affected}일간 {boosted_count}건의 시장 시그널이 "
-            f"포착되었으나, ADR 상향 조정이 이루어지지 않아 약 {int(positive_opp/10000):,}만원의 "
-            f"추가 수익 기회를 놓친 것으로 분석됩니다.",
-            f"Under current occupancy-focused policy, {boosted_count} market signals were detected "
-            f"but ADR was not adjusted, resulting in approximately KRW {int(positive_opp):,} of missed opportunity."
+            f"현재 점유율 중심 정책 하에서 {days_affected}일간 {boosted_count}건의 시장 시그널이 포착되었으나, ADR 상향이 이루어지지 않아 약 KRW {int(positive_opp):,}의 추가 수익 기회를 놓쳤습니다.",
+            f"Under current policy, {boosted_count} signals detected but KRW {int(positive_opp):,} opportunity missed."
         )
-        pdf.multi_cell(160, 5, key_msg)
+        _safe_multicell(pdf, 160, 5, key_msg)
 
-    # ============ 페이지 3: 차트 - 날짜별 기회비용 ============
+    # ============ 페이지 3: 차트 ============
     pdf.add_page()
     pdf.set_text_color(26, 42, 68)
     pdf.set_font(KFONT, 'B', 20)
@@ -1249,10 +1264,9 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
     pdf.ln(8)
 
     if not opp_df.empty:
-        # 차트 1: 날짜별 기회비용
         pdf.set_font(KFONT, 'B', 13)
         pdf.set_text_color(166, 138, 86)
-        pdf.cell(0, 8, T("📊 날짜별 기회비용 분포", "📊 Daily Opportunity Cost"), ln=True)
+        pdf.cell(0, 8, T("날짜별 기회비용 분포", "Daily Opportunity Cost"), ln=True)
         pdf.ln(2)
 
         daily_opp = opp_df.groupby(['날짜', '요일'])['기회비용'].sum().reset_index()
@@ -1263,27 +1277,24 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
                           color='기회비용', color_continuous_scale=['#E8F5E9', '#FF5252'])
             fig1.update_layout(template="plotly_white", height=350, width=700,
                                 showlegend=False, margin=dict(l=50, r=20, t=30, b=50),
-                                xaxis_title="", yaxis_title="KRW",
-                                font=dict(size=11))
+                                xaxis_title="", yaxis_title="KRW", font=dict(size=11))
             img_bytes = _fig_to_image_bytes(fig1, width=700, height=350)
             if img_bytes:
                 import tempfile
                 with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                     tmp.write(img_bytes)
-                    pdf.image(tmp.name, x=20, w=170)
-                os.unlink(tmp.name)
-        except Exception as e:
-            pdf.set_font(KFONT, '', 10)
-            pdf.set_text_color(150, 0, 0)
-            pdf.cell(0, 8, T(f"[차트 생성 실패: {str(e)[:50]}]",
-                              f"[Chart generation failed]"), ln=True)
+                    tmp_path = tmp.name
+                pdf.image(tmp_path, x=20, w=170)
+                try:
+                    os.unlink(tmp_path)
+                except: pass
+        except Exception:
+            pass
 
         pdf.ln(5)
-
-        # 차트 2: 객실별 누수
         pdf.set_font(KFONT, 'B', 13)
         pdf.set_text_color(166, 138, 86)
-        pdf.cell(0, 8, T("🏨 객실 타입별 기회비용 누적", "🏨 Opportunity Cost by Room Type"), ln=True)
+        pdf.cell(0, 8, T("객실 타입별 기회비용", "Opportunity Cost by Room Type"), ln=True)
         pdf.ln(2)
 
         room_opp = opp_df.groupby('객실타입')['기회비용'].sum().reset_index().sort_values('기회비용', ascending=True)
@@ -1292,19 +1303,21 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
                           color='기회비용', color_continuous_scale=['#E8F5E9', '#FF5252'])
             fig2.update_layout(template="plotly_white", height=280, width=700,
                                 showlegend=False, margin=dict(l=50, r=20, t=20, b=40),
-                                xaxis_title="KRW", yaxis_title="",
-                                font=dict(size=11))
+                                xaxis_title="KRW", yaxis_title="", font=dict(size=11))
             img_bytes = _fig_to_image_bytes(fig2, width=700, height=280)
             if img_bytes:
                 import tempfile
                 with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                     tmp.write(img_bytes)
-                    pdf.image(tmp.name, x=20, w=170)
-                os.unlink(tmp.name)
-        except Exception as e:
+                    tmp_path = tmp.name
+                pdf.image(tmp_path, x=20, w=170)
+                try:
+                    os.unlink(tmp_path)
+                except: pass
+        except Exception:
             pass
 
-# ============ 페이지 4: 대표 사례 (스토리텔링) ============
+# ============ 페이지 4: 대표 사례 ============
     pdf.add_page()
     pdf.set_text_color(26, 42, 68)
     pdf.set_font(KFONT, 'B', 20)
@@ -1316,9 +1329,9 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
     if not opp_df.empty:
         pdf.set_font(KFONT, '', 10)
         pdf.set_text_color(80, 80, 80)
-        pdf.multi_cell(0, 6, T(
-            "가장 큰 기회비용이 발생한 TOP 3 날짜에 대해 시장 상황, 의사결정 과정, 결과를 상세히 분석합니다.",
-            "Detailed analysis of TOP 3 dates with highest opportunity cost."
+        _safe_multicell(pdf, 0, 6, T(
+            "가장 큰 기회비용이 발생한 TOP 3 날짜를 상세 분석합니다.",
+            "Top 3 dates with highest opportunity cost analyzed in detail."
         ))
         pdf.ln(5)
 
@@ -1333,68 +1346,70 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
             sim_bar = case['시뮬BAR']
             sim_p = int(case['시뮬단가'])
             opp = int(case['기회비용'])
-            signal = case['시그널']
+            signal = str(case['시그널'])[:50]
 
             # 케이스 제목
             pdf.set_fill_color(26, 42, 68)
             pdf.rect(20, pdf.get_y(), 170, 10, 'F')
             pdf.set_xy(22, pdf.get_y() + 2)
-            pdf.set_font(KFONT, 'B', 12)
+            pdf.set_font(KFONT, 'B', 11)
             pdf.set_text_color(255, 255, 255)
-            pdf.cell(0, 6, T(
-                f"  CASE {idx+1}.  {case_date.strftime('%Y-%m-%d')} ({WEEKDAYS_KR[case_date.weekday()]}) | {case_room} | 누수 KRW {opp:,}",
-                f"  CASE {idx+1}.  {case_date.strftime('%Y-%m-%d')} | {case_room} | Loss KRW {opp:,}"
-            ), ln=True)
+            title_txt = T(
+                f"  CASE {idx+1}. {case_date.strftime('%Y-%m-%d')} ({WEEKDAYS_KR[case_date.weekday()]}) | {case_room} | 누수 KRW {opp:,}",
+                f"  CASE {idx+1}. {case_date.strftime('%Y-%m-%d')} | {case_room} | Loss KRW {opp:,}"
+            )
+            pdf.cell(0, 6, title_txt, ln=True)
             pdf.ln(5)
 
-            # 스토리 박스
             pdf.set_text_color(0, 0, 0)
+
+            # 시장 상황
             pdf.set_font(KFONT, 'B', 10)
             pdf.set_text_color(166, 138, 86)
-            pdf.cell(0, 7, T("시장 상황", "Market Situation"), ln=True)
-            pdf.set_font(KFONT, '', 10)
+            pdf.cell(0, 6, T("> 시장 상황", "> Market Situation"), ln=True)
+            pdf.set_font(KFONT, '', 9)
             pdf.set_text_color(60, 60, 60)
-            pdf.multi_cell(0, 5, T(
-                f"시뮬레이터가 포착한 시장 시그널: {signal}. 이 시점에서 외부 시장은 명확한 상승 신호를 보이고 있었습니다.",
-                f"Signals detected: {signal}. External market showed clear upward momentum."
+            _safe_multicell(pdf, 0, 5, T(
+                f"시뮬레이터 포착 시그널: {signal}. 외부 시장이 명확한 상승 신호를 보였습니다.",
+                f"Signals: {signal}. Market showed upward momentum."
             ))
             pdf.ln(2)
 
+            # 우리의 판단
             pdf.set_font(KFONT, 'B', 10)
             pdf.set_text_color(166, 138, 86)
-            pdf.cell(0, 7, T("우리의 판단", "Our Decision"), ln=True)
-            pdf.set_font(KFONT, '', 10)
+            pdf.cell(0, 6, T("> 우리의 판단", "> Our Decision"), ln=True)
+            pdf.set_font(KFONT, '', 9)
             pdf.set_text_color(60, 60, 60)
-            pdf.multi_cell(0, 5, T(
-                f"{case_room} 객실은 점유율 기반 시스템에 의해 {real_bar} (KRW {real_p:,})으로 판매되었습니다. "
-                f"이는 외부 시장 시그널을 반영하지 않은 가격으로, '점유율 채우기' 중심의 현재 정책이 반영된 결과입니다.",
-                f"Room {case_room} was sold at {real_bar} (KRW {real_p:,}) based on occupancy-only policy."
+            _safe_multicell(pdf, 0, 5, T(
+                f"{case_room} 객실은 {real_bar} (KRW {real_p:,})으로 판매. 점유율 기반 정책 결과로, 외부 시그널 미반영.",
+                f"{case_room} sold at {real_bar} (KRW {real_p:,}) - occupancy-only policy."
             ))
             pdf.ln(2)
 
+            # 시뮬 제안
             pdf.set_font(KFONT, 'B', 10)
             pdf.set_text_color(166, 138, 86)
-            pdf.cell(0, 7, T("시뮬레이터 제안", "Simulator Recommendation"), ln=True)
-            pdf.set_font(KFONT, '', 10)
+            pdf.cell(0, 6, T("> 시뮬레이터 제안", "> Simulator Recommendation"), ln=True)
+            pdf.set_font(KFONT, '', 9)
             pdf.set_text_color(60, 60, 60)
-            pdf.multi_cell(0, 5, T(
-                f"시장 시그널을 반영한 시뮬레이터는 {sim_bar} (KRW {sim_p:,})을 제안했습니다. "
-                f"단가 차이는 KRW {sim_p - real_p:,}이며, {sold}개 객실 판매 기준 총 KRW {opp:,}의 추가 수익이 가능했습니다.",
-                f"Simulator recommended {sim_bar} (KRW {sim_p:,}). Gap: KRW {sim_p - real_p:,} x {sold} rooms = KRW {opp:,}."
+            _safe_multicell(pdf, 0, 5, T(
+                f"시뮬은 {sim_bar} (KRW {sim_p:,}) 제안. 단가 차이 KRW {sim_p - real_p:,}, {sold}실 판매 기준 총 KRW {opp:,} 추가 수익 가능.",
+                f"Sim recommended {sim_bar} (KRW {sim_p:,}). Gap x {sold} rooms = KRW {opp:,}."
             ))
             pdf.ln(2)
 
+            # 교훈
             pdf.set_font(KFONT, 'B', 10)
             pdf.set_text_color(166, 138, 86)
-            pdf.cell(0, 7, T("교훈", "Lesson Learned"), ln=True)
-            pdf.set_font(KFONT, '', 10)
+            pdf.cell(0, 6, T("> 교훈", "> Lesson"), ln=True)
+            pdf.set_font(KFONT, '', 9)
             pdf.set_text_color(60, 60, 60)
-            pdf.multi_cell(0, 5, T(
-                f"점유율이 이미 충족된 상황에서 시장이 강세를 보일 때, ADR을 상향하여 수익을 극대화할 기회가 있었습니다. "
-                f"하이엔드 리조트로서 브랜드 포지셔닝을 강화하는 동시에 추가 매출을 확보할 수 있는 전형적인 사례입니다.",
-                f"When occupancy is already strong and market signals are bullish, ADR optimization is critical."
+            _safe_multicell(pdf, 0, 5, T(
+                "점유율 충족 + 시장 강세 상황에서 ADR 상향 기회가 있었습니다. 브랜드 포지셔닝 강화와 매출 확보가 동시에 가능한 전형 사례.",
+                "When occupancy is strong and market is bullish, ADR upside exists."
             ))
-            pdf.ln(8)
+            pdf.ln(6)
 
     # ============ 페이지 5: 경쟁사 벤치마크 ============
     pdf.add_page()
@@ -1407,23 +1422,24 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
 
     pdf.set_font(KFONT, '', 10)
     pdf.set_text_color(80, 80, 80)
-    pdf.multi_cell(0, 6, T(
-        "제주 5성급 리조트 시장의 주요 경쟁사인 그랜드 조선 제주 및 파르나스 제주와 엠버퓨어힐의 가격 포지셔닝을 비교합니다.",
-        "Price positioning comparison with major competitors."
+    _safe_multicell(pdf, 0, 6, T(
+        "제주 5성급 시장의 주요 경쟁사와 엠버퓨어힐의 가격 포지셔닝을 비교합니다.",
+        "Price positioning comparison with major Jeju competitors."
     ))
     pdf.ln(5)
 
-    # 경쟁사 평균가 계산
     if curr_df is not None and df_comp is not None and not df_comp.empty:
         dates_list = sorted(curr_df['Date'].unique())
-        josun_prices, parnas_prices, amber_prices = [], [], []
+        josun_prices, parnas_prices = [], []
 
         for d in dates_list:
-            j, p, _ = get_market_price_for_date(d, df_flight, df_comp, active_search_date)
-            if j: josun_prices.append(j)
-            if p: parnas_prices.append(p)
+            try:
+                j, p, _ = get_market_price_for_date(d, df_flight, df_comp, active_search_date)
+                if j: josun_prices.append(j)
+                if p: parnas_prices.append(p)
+            except:
+                continue
 
-        # 엠버 평균
         our_avg_dict = get_our_avg_price_for_dates(curr_df, dates_list)
         amber_prices = [v for v in our_avg_dict.values() if v]
 
@@ -1431,22 +1447,23 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
         avg_parnas = sum(parnas_prices) / len(parnas_prices) if parnas_prices else 0
         avg_amber = sum(amber_prices) / len(amber_prices) if amber_prices else 0
 
-        # 경쟁사 테이블
+        # 테이블
         pdf.set_font(KFONT, 'B', 11)
         pdf.set_fill_color(26, 42, 68)
         pdf.set_text_color(255, 255, 255)
         pdf.cell(55, 9, T("호텔", "Hotel"), 1, 0, 'C', True)
         pdf.cell(45, 9, T("평균가", "Avg Price"), 1, 0, 'C', True)
         pdf.cell(35, 9, T("포지셔닝", "Position"), 1, 0, 'C', True)
-        pdf.cell(35, 9, T("격차", "Gap"), 1, 1, 'C', True)
+        pdf.cell(35, 9, T("조선 대비", "vs Josun"), 1, 1, 'C', True)
 
         pdf.set_font(KFONT, '', 10)
         pdf.set_text_color(0, 0, 0)
 
         comp_data = [
             (T("그랜드 조선 제주", "Grand Josun"), avg_josun, T("프리미엄", "Premium"), 0),
-            (T("파르나스 제주", "Parnas Jeju"), avg_parnas, T("프리미엄", "Premium"), avg_parnas - avg_josun if avg_josun else 0),
-            (T("엠버퓨어힐 (현재)", "Amber (Current)"), avg_amber, T("하이엔드", "High-end"),
+            (T("파르나스 제주", "Parnas Jeju"), avg_parnas, T("프리미엄", "Premium"),
+             avg_parnas - avg_josun if avg_josun else 0),
+            (T("엠버퓨어힐", "Amber Pure Hill"), avg_amber, T("하이엔드", "High-end"),
              avg_amber - avg_josun if avg_josun else 0),
         ]
         fill_toggle = False
@@ -1459,47 +1476,44 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
             if gap == 0:
                 pdf.cell(35, 8, "-", 1, 1, 'C', fill)
             else:
-                pdf.cell(35, 8, f"{'+' if gap > 0 else ''}{int(gap):,}", 1, 1, 'C', fill)
+                sign = "+" if gap > 0 else ""
+                pdf.cell(35, 8, f"{sign}{int(gap):,}", 1, 1, 'C', fill)
             fill_toggle = not fill_toggle
 
         pdf.ln(8)
 
-        # 분석 코멘트
+        # 분석
         pdf.set_fill_color(255, 243, 224)
         y_box = pdf.get_y()
         pdf.rect(20, y_box, 170, 45, 'F')
         pdf.set_xy(25, y_box + 4)
         pdf.set_font(KFONT, 'B', 11)
         pdf.set_text_color(166, 138, 86)
-        pdf.cell(0, 6, T("포지셔닝 분석", "Positioning Analysis"), ln=True)
+        pdf.cell(0, 6, T("[ 포지셔닝 분석 ]", "[ Positioning Analysis ]"), ln=True)
         pdf.set_xy(25, pdf.get_y() + 2)
-        pdf.set_font(KFONT, '', 10)
+        pdf.set_font(KFONT, '', 9)
         pdf.set_text_color(60, 60, 60)
 
         if avg_amber and avg_josun:
             gap_pct = (avg_amber - avg_josun) / avg_josun * 100
             if gap_pct < -10:
                 analysis = T(
-                    f"엠버퓨어힐은 조선 대비 {abs(gap_pct):.1f}% 낮은 가격에 포지셔닝되어 있습니다. "
-                    f"하이엔드 리조트로서의 브랜드 가치를 고려할 때, 가격 상향 여지가 충분합니다. "
-                    f"'박리다매' 전략이 장기적으로 브랜드 희석을 초래할 수 있어 재검토가 필요합니다.",
-                    f"Amber is positioned {abs(gap_pct):.1f}% below Josun."
+                    f"엠버퓨어힐은 조선 대비 {abs(gap_pct):.1f}% 낮은 가격입니다. 하이엔드 리조트 브랜드 가치를 고려할 때 상향 여지가 충분하며, 박리다매 전략이 장기적 브랜드 희석을 초래할 수 있어 재검토가 필요합니다.",
+                    f"Amber is {abs(gap_pct):.1f}% below Josun. Repositioning needed."
                 )
             elif gap_pct < 0:
                 analysis = T(
-                    f"엠버퓨어힐은 조선 대비 {abs(gap_pct):.1f}% 낮은 수준으로, 적정 프리미엄 포지셔닝이 가능한 구간입니다. "
-                    f"시장 강세 구간에서는 적극적으로 격차를 좁히거나 역전시키는 전략이 유효합니다.",
-                    f"Amber is {abs(gap_pct):.1f}% below Josun - room for premium positioning."
+                    f"엠버퓨어힐은 조선 대비 {abs(gap_pct):.1f}% 낮아 적정 프리미엄 포지셔닝이 가능합니다. 시장 강세 구간에서 격차를 좁히는 전략이 유효합니다.",
+                    f"Amber is {abs(gap_pct):.1f}% below Josun - room for premium."
                 )
             else:
                 analysis = T(
-                    f"엠버퓨어힐은 조선을 상회하는 프리미엄 포지셔닝을 확보하고 있습니다. "
-                    f"이 위상을 지속적으로 유지하며 ADR을 더욱 끌어올리는 전략이 필요합니다.",
+                    f"엠버퓨어힐은 조선을 상회하는 프리미엄 포지셔닝을 확보했습니다. 이 위상을 유지하며 ADR을 더 끌어올리는 전략이 필요합니다.",
                     f"Amber is premium-positioned above Josun."
                 )
-            pdf.multi_cell(160, 5, analysis)
+            _safe_multicell(pdf, 160, 5, analysis)
 
-    # ============ 페이지 6: 정확도 검증 ============
+    # ============ 페이지 6: 신뢰도 ============
     pdf.add_page()
     pdf.set_text_color(26, 42, 68)
     pdf.set_font(KFONT, 'B', 20)
@@ -1510,46 +1524,42 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
 
     pdf.set_font(KFONT, '', 10)
     pdf.set_text_color(80, 80, 80)
-    pdf.multi_cell(0, 6, T(
-        "이 보고서의 결론이 신뢰할 수 있는 근거에 기반하고 있음을 증명하기 위해, 시뮬레이터의 정확도를 세 가지 방식으로 자체 검증합니다.",
-        "Three-way accuracy verification to ensure credibility of this report's conclusions."
+    _safe_multicell(pdf, 0, 6, T(
+        "보고서의 결론이 신뢰할 근거에 기반함을 증명하기 위해 시뮬레이터를 3가지 방식으로 자체 검증합니다.",
+        "Three-way accuracy verification."
     ))
     pdf.ln(5)
 
-    # 3가지 검증 방법
     pdf.set_font(KFONT, 'B', 12)
     pdf.set_text_color(166, 138, 86)
-    pdf.cell(0, 8, T("▸ 검증 방법론", "▸ Verification Methodology"), ln=True)
+    pdf.cell(0, 8, T("> 검증 방법론", "> Methodology"), ln=True)
     pdf.set_font(KFONT, '', 10)
     pdf.set_text_color(0, 0, 0)
 
     methods = [
-        (T("A. 예약 집중도 (Booking Concentration)",
-           "A. Booking Concentration"),
-         T("시뮬레이터가 BAR 상향을 제안한 날짜에 실제로 예약이 증가했는가를 측정합니다. 시장 시그널이 실제 수요와 일치하는지를 확인하는 지표입니다.",
-           "Measures if bookings actually increased on dates where simulator recommended BAR upgrade.")),
-        (T("B. 마감 매출 (Final Revenue)",
-           "B. Final Revenue"),
-         T("제안된 날짜가 실제로 평균 이상의 점유율로 마감되었는가를 평가합니다. 제안의 합리성을 사후 검증하는 지표입니다.",
-           "Evaluates if recommended dates closed with above-average occupancy.")),
-        (T("C. 점유율 일치 (Occupancy Match)",
-           "C. Occupancy Match"),
-         T("제안한 BAR 상향 단계와 실제 발생한 수요 수준이 일치하는가를 측정합니다. 시뮬레이터의 정밀도를 평가하는 지표입니다.",
-           "Measures alignment between suggested BAR upgrade and actual demand level.")),
+        (T("A. 예약 집중도", "A. Booking Concentration"),
+         T("시뮬이 BAR 상향 제안한 날짜에 실제 예약이 증가했는가를 측정합니다.",
+           "Measures if bookings increased on flagged dates.")),
+        (T("B. 마감 매출", "B. Final Revenue"),
+         T("제안 날짜가 평균 이상의 점유율로 마감되었는가를 평가합니다.",
+           "Checks if flagged dates closed with high occupancy.")),
+        (T("C. 점유율 일치", "C. Occupancy Match"),
+         T("제안 BAR 상향 단계와 실제 수요 수준이 일치하는가를 측정합니다.",
+           "Measures alignment between suggestion and actual demand.")),
     ]
 
     for title_m, desc in methods:
         pdf.set_font(KFONT, 'B', 10)
         pdf.set_text_color(26, 42, 68)
-        pdf.multi_cell(0, 6, title_m)
+        _safe_multicell(pdf, 0, 6, title_m)
         pdf.set_font(KFONT, '', 9)
         pdf.set_text_color(80, 80, 80)
-        pdf.multi_cell(0, 5, desc)
+        _safe_multicell(pdf, 0, 5, desc)
         pdf.ln(2)
 
     pdf.ln(3)
 
-    # 검증 결과 (있으면)
+    # 검증 결과
     if snapshots_list:
         try:
             verif = verify_simulator_accuracy(
@@ -1575,10 +1585,7 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
                 pdf.cell(0, 15, f"{overall:.1f}%", ln=True, align='C')
                 pdf.set_font(KFONT, '', 9)
                 pdf.set_text_color(200, 220, 255)
-                pdf.cell(0, 5, T(
-                    f"A: {a:.1f}% | B: {b:.1f}% | C: {c:.1f}%",
-                    f"A: {a:.1f}% | B: {b:.1f}% | C: {c:.1f}%"
-                ), ln=True, align='C')
+                pdf.cell(0, 5, f"A: {a:.1f}% | B: {b:.1f}% | C: {c:.1f}%", ln=True, align='C')
         except:
             pass
     else:
@@ -1588,9 +1595,9 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
         pdf.set_xy(25, y_box + 5)
         pdf.set_font(KFONT, '', 10)
         pdf.set_text_color(100, 100, 100)
-        pdf.multi_cell(160, 5, T(
-            "정확도 데이터는 일일 스냅샷이 2주 이상 축적된 후 본 보고서에 포함됩니다.",
-            "Accuracy data will be included after 2+ weeks of daily snapshots."
+        _safe_multicell(pdf, 160, 5, T(
+            "정확도 데이터는 일일 스냅샷이 2주 이상 축적된 후 포함됩니다.",
+            "Accuracy data available after 2+ weeks of snapshots."
         ))
 
     # ============ 페이지 7: Action Plan ============
@@ -1602,58 +1609,58 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
     pdf.rect(20, 32, 30, 2, 'F')
     pdf.ln(8)
 
-    # 핵심 이슈
+    # 문제점
     pdf.set_font(KFONT, 'B', 13)
     pdf.set_text_color(198, 40, 40)
-    pdf.cell(0, 8, T("현재 정책의 3가지 문제점", "Three Key Issues"), ln=True)
+    pdf.cell(0, 8, T("[ 현재 정책의 3가지 문제점 ]", "[ Three Key Issues ]"), ln=True)
     pdf.ln(2)
 
     issues = [
         (T("1. 점유율 편향", "1. Occupancy Bias"),
-         T("현재 '점유율 채우기' 중심 정책은 단기 객실 판매량은 보장하지만, 시장 강세 구간에서의 ADR 상향 기회를 포착하지 못해 장기 수익성을 저해합니다.",
-           "Occupancy-focused policy misses ADR upside during peak demand.")),
-        (T("2. 브랜드 가치 희석", "2. Brand Value Dilution"),
-         T("경쟁사 대비 낮은 가격 전략은 하이엔드 리조트로서의 브랜드 포지셔닝을 약화시킵니다. 장기적으로 프리미엄 고객층 이탈을 초래할 수 있습니다.",
-           "Below-market pricing dilutes high-end brand positioning.")),
+         T("점유율 채우기 중심 정책은 단기 판매량은 보장하나 시장 강세 구간의 ADR 상향 기회를 놓쳐 장기 수익성을 저해합니다.",
+           "Occupancy focus misses ADR upside during peak demand.")),
+        (T("2. 브랜드 가치 희석", "2. Brand Dilution"),
+         T("경쟁사 대비 낮은 가격 전략은 하이엔드 리조트로서의 브랜드 포지셔닝을 약화시키고 프리미엄 고객층 이탈을 초래할 수 있습니다.",
+           "Below-market pricing dilutes brand positioning.")),
         (T("3. 시장 시그널 무시", "3. Market Signal Blindness"),
-         T("경쟁사 가격 변동, 항공권 수요 급증 등 외부 시장 시그널을 가격 정책에 반영하지 않아, 기회비용이 지속적으로 누적되고 있습니다.",
-           "External market signals ignored, causing continuous opportunity loss.")),
+         T("경쟁사 가격 변동, 항공권 수요 급증 등 외부 시그널을 가격에 반영하지 않아 기회비용이 지속 누적되고 있습니다.",
+           "External signals ignored, causing continuous loss.")),
     ]
     for title_i, desc in issues:
         pdf.set_font(KFONT, 'B', 10)
         pdf.set_text_color(198, 40, 40)
-        pdf.cell(0, 6, title_i, ln=True)
+        _safe_multicell(pdf, 0, 6, title_i)
         pdf.set_font(KFONT, '', 9)
         pdf.set_text_color(60, 60, 60)
-        pdf.multi_cell(0, 5, desc)
+        _safe_multicell(pdf, 0, 5, desc)
         pdf.ln(2)
 
     pdf.ln(5)
 
-    # 단기/중기/장기 계획
+    # 로드맵
     pdf.set_font(KFONT, 'B', 13)
     pdf.set_text_color(46, 125, 50)
-    pdf.cell(0, 8, T("3단계 실행 로드맵", "3-Phase Roadmap"), ln=True)
+    pdf.cell(0, 8, T("[ 3단계 실행 로드맵 ]", "[ 3-Phase Roadmap ]"), ln=True)
     pdf.ln(2)
 
     phases = [
         (T("단기 (1주 이내)", "Short-term (1 week)"),
-         T("시뮬레이터 제안에 따라 시그널 발동 날짜의 ADR을 즉시 검토 및 조정. Dynamic 객실 5개 타입에 대해 시장 시그널 기반 일일 가격 모니터링 체계 가동.",
-           "Review and adjust ADR for flagged dates. Activate daily monitoring.")),
+         T("시그널 발동 날짜의 ADR 즉시 검토 및 조정. Dynamic 5개 객실 타입에 대한 일일 가격 모니터링 가동.",
+           "Review ADR for flagged dates. Daily monitoring.")),
         (T("중기 (1개월)", "Mid-term (1 month)"),
-         T("객실 타입별 민감도 계수를 실제 결과에 맞춰 세밀 조정. 수기 인상 기준(전체 점유율 75%/85%)을 자동화된 알림 체계와 연동. 주간 단위 경영진 보고 정례화.",
-           "Fine-tune sensitivity coefficients. Automate alerts. Weekly management reporting.")),
+         T("객실별 민감도 계수 세밀 조정. 전체 점유율 75%/85% 자동 알림 체계 연동. 주간 경영진 보고 정례화.",
+           "Fine-tune sensitivity. Automate alerts. Weekly reports.")),
         (T("장기 (1분기)", "Long-term (1 quarter)"),
-         T("경쟁사 벤치마크에 기반한 포지셔닝 재정립. 브랜드 프리미엄을 반영한 ADR 목표 설정. 70~80% 점유율 + 높은 ADR 전략으로 순수익 극대화 구조 확립.",
-           "Repositioning based on benchmarks. Establish premium ADR targets.")),
+         T("경쟁사 벤치마크 기반 포지셔닝 재정립. 70~80% 점유율 + 프리미엄 ADR 구조로 순수익 극대화.",
+           "Reposition based on benchmarks. Establish premium ADR.")),
     ]
     for title_p, desc in phases:
         pdf.set_font(KFONT, 'B', 10)
         pdf.set_text_color(46, 125, 50)
-        pdf.cell(0, 6, title_p, ln=True)
+        _safe_multicell(pdf, 0, 6, title_p)
         pdf.set_font(KFONT, '', 9)
         pdf.set_text_color(60, 60, 60)
-        pdf.multi_cell(0, 5, desc)
+        _safe_multicell(pdf, 0, 5, desc)
         pdf.ln(2)
 
     # ============ 페이지 8: 결론 ============
@@ -1672,50 +1679,42 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
         pdf.set_xy(20, pdf.get_y() + 8)
         pdf.set_font(KFONT, 'B', 12)
         pdf.set_text_color(255, 255, 255)
-        pdf.cell(0, 7, T("분석 기간 누적 기회비용", "Total Opportunity Cost Identified"), ln=True, align='C')
+        pdf.cell(0, 7, T("누적 기회비용", "Total Opportunity Cost"), ln=True, align='C')
         pdf.set_font(KFONT, 'B', 32)
         pdf.set_text_color(255, 215, 0)
         pdf.cell(0, 18, f"KRW {int(positive_opp):,}", ln=True, align='C')
         pdf.set_font(KFONT, '', 10)
         pdf.set_text_color(200, 200, 200)
-        pdf.multi_cell(0, 5, T(
-            "시장 시그널 기반 가격 정책 도입 시 추가로 확보 가능했던 매출",
-            "Additional revenue achievable with signal-based pricing"
-        ), align='C')
+        pdf.cell(0, 5, T("시장 시그널 기반 가격으로 확보 가능했던 매출",
+                          "Revenue achievable with signal-based pricing"), ln=True, align='C')
 
     pdf.ln(15)
 
     pdf.set_font(KFONT, 'B', 12)
     pdf.set_text_color(166, 138, 86)
-    pdf.cell(0, 8, T("핵심 제언", "Key Recommendations"), ln=True)
+    pdf.cell(0, 8, T("[ 핵심 제언 ]", "[ Key Recommendations ]"), ln=True)
     pdf.ln(2)
 
     pdf.set_font(KFONT, '', 10)
     pdf.set_text_color(40, 40, 40)
     conclusion = T(
-        "엠버퓨어힐은 제주 최고급 리조트로서 명확한 브랜드 자산을 보유하고 있습니다. "
-        "그러나 현재의 점유율 중심 가격 정책은 이 브랜드 자산을 충분히 화폐화하지 못하고 있습니다.\n\n"
-        "본 보고서가 제시하는 시장 시그널 기반 동적 가격 전략은 객실 판매량을 크게 희생하지 않으면서도 "
-        "ADR을 체계적으로 상향시켜, 총 매출과 순수익을 동시에 증대시킬 수 있는 검증된 접근법입니다.\n\n"
-        "70~80% 점유율 + 프리미엄 ADR 조합은 브랜드 가치를 보호하면서 수익을 극대화하는 하이엔드 리조트의 "
-        "표준 전략이며, 파르나스 제주 등 동급 경쟁사들이 이미 채택하고 있는 정책입니다.\n\n"
-        "본 보고서의 시뮬레이터와 실행 로드맵을 통해 엠버퓨어힐의 수익 구조를 한 단계 업그레이드할 수 있기를 제언드립니다.",
-        "Amber Pure Hill holds strong brand equity as Jeju's premier resort. "
-        "However, current occupancy-focused pricing does not fully monetize this asset.\n\n"
-        "Market signal-based dynamic pricing can systematically raise ADR while maintaining healthy occupancy, "
-        "increasing both total revenue and profitability.\n\n"
-        "The 70-80% OCC + premium ADR strategy is the standard approach for high-end resorts, "
-        "already adopted by peers like Parnas Jeju.\n\n"
-        "We recommend adopting this simulator and roadmap to upgrade Amber Pure Hill's revenue structure."
+        "엠버퓨어힐은 제주 최고급 리조트로서 명확한 브랜드 자산을 보유합니다. 그러나 현재의 점유율 중심 가격 정책은 이 자산을 충분히 화폐화하지 못하고 있습니다.\n\n"
+        "본 보고서가 제시하는 시장 시그널 기반 동적 가격 전략은 객실 판매량을 크게 희생하지 않으면서 ADR을 체계적으로 상향시켜 총 매출과 순수익을 동시에 증대시킬 수 있는 검증된 접근법입니다.\n\n"
+        "70~80% 점유율 + 프리미엄 ADR 조합은 브랜드 가치를 보호하며 수익을 극대화하는 하이엔드 리조트의 표준 전략이며, 파르나스 제주 등 동급 경쟁사들이 이미 채택하고 있는 정책입니다.\n\n"
+        "본 시뮬레이터와 실행 로드맵을 통해 엠버퓨어힐의 수익 구조를 한 단계 업그레이드할 수 있기를 제언드립니다.",
+        "Amber Pure Hill holds strong brand equity. Current pricing doesn't fully monetize it.\n\n"
+        "Market signal-based dynamic pricing can systematically raise ADR while maintaining occupancy.\n\n"
+        "The 70-80% OCC + premium ADR strategy is the standard for high-end resorts.\n\n"
+        "We recommend adopting this simulator and roadmap."
     )
-    pdf.multi_cell(0, 6, conclusion)
+    _safe_multicell(pdf, 0, 6, conclusion)
 
     # 푸터
     pdf.set_y(275)
     pdf.set_font(KFONT, '', 8)
     pdf.set_text_color(150, 150, 150)
-    pdf.cell(0, 10, T("대외비 | 엠버퓨어힐 전략 수익 분석",
-                       "CONFIDENTIAL | AMBER PURE HILL"), 0, 0, 'C')
+    pdf.cell(0, 10, T("대외비 - 엠버퓨어힐 전략 수익 분석",
+                       "CONFIDENTIAL - AMBER PURE HILL"), 0, 0, 'C')
 
     return bytes(pdf.output())
 
