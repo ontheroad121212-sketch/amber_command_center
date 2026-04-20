@@ -1047,32 +1047,49 @@ def render_master_table(current_df, prev_df, title="", mode="기준", applied_ra
                 applied_bar = applied_rates.get(date_str, {}).get('rooms', {}).get(rid) if applied_rates else None
                 is_applied = applied_bar is not None
                 
-                final_bar = applied_bar if is_applied else pure_sys_bar
-                final_price = get_bar_price(rid, final_bar)
-                
-                bg = BAR_GRADIENT_COLORS.get(final_bar, "#FFFFFF") if rid in DYNAMIC_ROOMS or final_bar == "BAR0" else "#F1F1F1"
+                # 수동 개입이 없다면, 현재 CMS 요금은 어제 요금(prev_bar)에 머물러 있다고 전제함
+                current_cms_bar = prev_bar if prev_bar else pure_sys_bar
                 
                 if is_past:
+                    final_bar = applied_bar if is_applied else current_cms_bar
+                    final_price = get_bar_price(rid, final_bar)
+                    bg = BAR_GRADIENT_COLORS.get(final_bar, "#FFFFFF") if rid in DYNAMIC_ROOMS or final_bar == "BAR0" else "#F1F1F1"
                     style += f"background-color: {bg}; opacity: 0.6;"
                     content = f"<b>{final_bar}</b><br>{final_price:,}<br><span style='font-size:8px; color:#444;'>📜마감</span>"
                 else:
                     if is_applied:
+                        final_bar = applied_bar
+                        final_price = get_bar_price(rid, final_bar)
+                        bg = BAR_GRADIENT_COLORS.get(final_bar, "#FFFFFF") if rid in DYNAMIC_ROOMS or final_bar == "BAR0" else "#F1F1F1"
+                        
                         if applied_bar == pure_sys_bar:
-                            # 수동으로 확정했는데, 권장가랑 똑같음
+                            # 1. 수동으로 확정했는데, 시스템 권장가랑 똑같음
                             style += f"background-color: {bg}; border: 2.5px solid #2E7D32;"
                             content = f"<div style='font-size:9px; color:#2E7D32; font-weight:bold; margin-bottom:2px;'>✅ 전략 일치</div>"
                             content += f"<b>{final_bar}</b><br>{final_price:,}<br>{occ:.0f}%"
                         else:
-                            # 시스템은 올리라 했는데 안 올렸거나(무시), 더 올린 경우
+                            # 2. 수동으로 시스템 권장가와 다르게 덮어씌움 (비싸게든 싸게든)
                             style += f"background-color: {bg}; border: 2.5px dashed #D32F2F;"
-                            content = f"<div style='font-size:9px; color:#D32F2F; font-weight:bold; margin-bottom:2px;'>⭐ 수동 오버라이드</div>"
+                            content = f"<div style='font-size:9px; color:#D32F2F; font-weight:bold; margin-bottom:2px;'>⭐ 수동 개입</div>"
                             content += f"<b>{final_bar}</b><br>{final_price:,}<br>{occ:.0f}%<br>"
                             content += f"<div style='font-size:10px; color:#333; margin-top:3px; background:rgba(255,255,255,0.7); padding:2px; border-radius:3px;'>💡권장: <del>{pure_sys_bar}</del></div>"
                     else:
-                        # 손 안 댄 경우 (시스템 자동 연동)
-                        style += f"background-color: {bg}; opacity: 0.9;"
-                        content = f"<div style='font-size:9px; color:#757575; font-weight:bold; margin-bottom:2px;'>🤖 자동 반영</div>"
-                        content += f"<b>{final_bar}</b><br>{final_price:,}<br>{occ:.0f}%"
+                        # 수동 개입 안 한 경우 (어제 요금 그대로 유지 중)
+                        final_bar = current_cms_bar
+                        final_price = get_bar_price(rid, final_bar)
+                        bg = BAR_GRADIENT_COLORS.get(final_bar, "#FFFFFF") if rid in DYNAMIC_ROOMS or final_bar == "BAR0" else "#F1F1F1"
+                        
+                        if pure_sys_bar != current_cms_bar:
+                            # 3. ⚠️ 핵심 추가: 시스템은 바꾸라고 했는데 안 바꾼 날 (의도적 홀딩 or 누수)
+                            style += f"background-color: {bg}; border: 2.5px solid #FF8F00;"
+                            content = f"<div style='font-size:9px; color:#FF8F00; font-weight:bold; margin-bottom:2px;'>⚠️ 미적용 (수익포기)</div>"
+                            content += f"<b>{final_bar}</b><br>{final_price:,}<br>{occ:.0f}%<br>"
+                            content += f"<div style='font-size:10px; color:#333; margin-top:3px; background:rgba(255,255,255,0.9); padding:2px; border-radius:3px;'>💡권장: <b style='color:#D32F2F;'>{pure_sys_bar}</b></div>"
+                        else:
+                            # 4. 시스템도 어제 요금 그대로 유지하라고 함
+                            style += f"background-color: {bg}; opacity: 0.9;"
+                            content = f"<div style='font-size:9px; color:#757575; font-weight:bold; margin-bottom:2px;'>🤖 변동 없음</div>"
+                            content += f"<b>{final_bar}</b><br>{final_price:,}<br>{occ:.0f}%"
                         
             elif mode == "변화":
                 curr_av = float(avail) if pd.notna(avail) else 0.0
