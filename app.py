@@ -1774,7 +1774,7 @@ if not st.session_state.today_df.empty:
                 fig_hotel.add_trace(go.Scatter(x=trend_df['날짜_dt'], y=trend_df['엠버_시스템'],
                     mode='lines+markers', name='엠버(시스템)', line=dict(color='#1976D2', width=3)))
             fig_hotel.add_hline(y=josun_threshold, line=dict(color='red', dash='dash'))
-            fig_hotel.add_vline(x=pd.to_datetime(TODAY),
+            fig_hotel.add_vline(x=TODAY.strftime('%Y-%m-%d'),
                                  line=dict(color='purple', dash='dot', width=2),
                                  annotation_text="오늘", annotation_position="top")
             fig_hotel.update_layout(template="plotly_white", height=500, hovermode='x unified')
@@ -1790,7 +1790,7 @@ if not st.session_state.today_df.empty:
                     text=[f"{int(p):,}" if (pd.notna(p) and p) else "" for p in trend_df['항공권']],
                     textposition='outside'))
             fig_flight.add_hline(y=flight_threshold, line=dict(color='red', dash='dash'))
-            fig_flight.add_vline(x=pd.to_datetime(TODAY),
+            fig_flight.add_vline(x=TODAY.strftime('%Y-%m-%d'),
                                   line=dict(color='purple', dash='dot', width=2),
                                   annotation_text="오늘", annotation_position="top")
             fig_flight.update_layout(template="plotly_white", height=400, showlegend=False)
