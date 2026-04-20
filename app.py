@@ -892,24 +892,26 @@ def get_latest_snapshot():
 # ============================================================
 # 19. 메모 입력 위젯
 # ============================================================
-def render_note_input(key_id, label="메모", notes=None, show_tag=True):
+def render_note_input(key_id, label="메모", notes=None, show_tag=True, widget_prefix=""):
     if notes is None: notes = {}
     existing = notes.get(key_id, {})
     existing_content = existing.get('content', '')
     existing_tag = existing.get('tag', '일반')
+    # widget_prefix를 붙여서 탭마다 key가 중복되지 않게
+    unique_key = f"{widget_prefix}_{key_id}" if widget_prefix else key_id
     col1, col2 = st.columns([4, 1]) if show_tag else (st.container(), None)
     with col1:
-        new_content = st.text_area(label, value=existing_content, key=f"note_input_{key_id}",
+        new_content = st.text_area(label, value=existing_content, key=f"note_input_{unique_key}",
                                     height=80, placeholder="예: 총지배인 지시로 유지 / 단체예약 / 다시 확인")
     if show_tag and col2:
         with col2:
             tag_options = ['일반', '의사결정', '경고', '대기']
             new_tag = st.selectbox("태그", tag_options,
                 index=tag_options.index(existing_tag) if existing_tag in tag_options else 0,
-                key=f"note_tag_{key_id}")
+                key=f"note_tag_{unique_key}")
     else:
         new_tag = existing_tag
-    if st.button("💾 저장", key=f"note_save_{key_id}"):
+    if st.button("💾 저장", key=f"note_save_{unique_key}"):
         if save_note(key_id, new_content, new_tag):
             st.success("저장되었습니다!")
             st.rerun()
@@ -2024,7 +2026,7 @@ if not st.session_state.today_df.empty:
                 key="tab1_memo_date"
             )
             note_key = get_note_key(selected_date_memo)
-            render_note_input(note_key, f"{selected_date_memo.strftime('%m/%d')} 메모", all_notes)
+            render_note_input(note_key, f"{selected_date_memo.strftime('%m/%d')} 메모", all_notes, widget_prefix="tab1")
         else:
             st.info("미래 날짜 데이터가 없습니다.")
 
@@ -2057,7 +2059,7 @@ if not st.session_state.today_df.empty:
                 key="tab2_memo_date"
             )
             note_key = get_note_key(sel_trigger_date)
-            render_note_input(note_key, f"{sel_trigger_date.strftime('%m/%d')} 의사결정", all_notes)
+            render_note_input(note_key, f"{sel_trigger_date.strftime('%m/%d')} 의사결정", all_notes, widget_prefix="tab2")
         else:
             st.info("미래에 시그널 발동 중인 날짜가 없습니다.")
 
