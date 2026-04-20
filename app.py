@@ -1839,7 +1839,7 @@ with st.sidebar:
                 st.success("저장 완료!")
                 st.rerun()
 
-st.divider()
+    st.divider()
     st.header("🔄 요금 에디터 연동")
     st.info("요금 에디터 사이트에서 업로드하고 확정한 최신 데이터를 불러옵니다. (파일 별도 업로드 불필요)")
     
@@ -1850,7 +1850,7 @@ st.divider()
             if not latest_db.empty:
                 st.session_state.today_df = latest_db.sort_values(by=['Date', 'RoomID'])
                 
-                # 어제 데이터(비교군) 가져오기 로직 (오늘 날짜 이전 스냅샷 중 가장 최신)
+                # 어제 데이터(비교군) 가져오기 로직
                 docs = db.collection("daily_snapshots").where("work_date", "<", date.today().strftime("%Y-%m-%d")).order_by("work_date", direction=firestore.Query.DESCENDING).limit(1).stream()
                 prev_found = False
                 for doc in docs:
