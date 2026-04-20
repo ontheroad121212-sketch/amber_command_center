@@ -1839,96 +1839,35 @@ with st.sidebar:
                 st.success("저장 완료!")
                 st.rerun()
 
-    st.divider()
-    st.header("📂 잔여객실 업로드")
-    files = st.file_uploader("엑셀/CSV 파일", accept_multiple_files=True, type=['xlsx', 'xls', 'csv'])
-
-    st.divider()
-    if st.button("🚀 오늘 내역 저장", type="primary", use_container_width=True):
-        if not st.session_state.today_df.empty:
-            t_df = st.session_state.today_df.copy()
-            t_df['Date'] = t_df['Date'].apply(lambda x: x.isoformat())
-            p_df_dict = []
-            if not st.session_state.prev_df.empty:
-                p_df = st.session_state.prev_df.copy()
-                p_df['Date'] = p_df['Date'].apply(lambda x: x.isoformat())
-                p_df_dict = p_df.to_dict(orient='records')
-            db.collection("daily_snapshots").add({
-                "work_date": date.today().strftime("%Y-%m-%d"),
-                "save_time": datetime.now().isoformat(),
-                "data": t_df.to_dict(orient='records'),
-                "prev_data": p_df_dict
-            })
-            st.success("저장 완료!")
-        else:
-            st.warning("저장할 데이터가 없습니다.")
-
-    st.divider()
-    st.header("🗓️ 이벤트 캘린더")
-    with st.expander("➕ 새 이벤트", expanded=False):
-        ev_name = st.text_input("이벤트 이름", placeholder="유채꽃축제")
-        ev_start = st.date_input("시작일", value=date.today(), key="ev_start")
-        ev_end = st.date_input("종료일", value=date.today() + timedelta(days=3), key="ev_end")
-        ev_impact = st.selectbox("BAR 상향", [1, 2, 3], index=0)
-        ev_note = st.text_input("메모", placeholder="선택")
-        if st.button("이벤트 추가"):
-            if ev_name:
-                ev_id = f"{ev_start.strftime('%Y%m%d')}_{ev_name.replace(' ', '_')}"
-                if save_event(ev_id, ev_name, ev_start, ev_end, ev_impact, ev_note):
-                    st.success(f"'{ev_name}' 추가!")
-                    st.rerun()
-
-    if all_events:
-        st.caption(f"등록된 이벤트: {len(all_events)}개")
-        for ev in all_events:
-            col_e1, col_e2 = st.columns([4, 1])
-            with col_e1:
-                st.markdown(f"""
-                <div style='background:#FFF3E0; padding:6px 10px; border-radius:6px; border-left:4px solid #FF6F00; margin-bottom:5px; font-size:12px;'>
-                    <b>{ev['name']}</b> (+{ev['impact']})<br>
-                    <span style='color:#666;'>{ev['start_date']} ~ {ev['end_date']}</span>
-                </div>""", unsafe_allow_html=True)
-            with col_e2:
-                if st.button("🗑️", key=f"del_ev_{ev['id']}"):
-                    delete_event(ev['id'])
-                    st.rerun()
-
-# 파일 파싱
-if files:
-    new_extracted = []
-    ROW_MAP = {4: "GDB", 5: "GDF", 6: "FDB", 7: "FDE", 8: "FPT",
-               9: "FFD", 10: "HDP", 11: "HDT", 12: "HDF", 13: "PPV"}
-    for f in files:
-        date_tag = re.search(r'\d{8}', f.name).group() if re.search(r'\d{8}', f.name) else f.name
-        df_raw = pd.read_excel(f, header=None)
-        dates_raw = df_raw.iloc[2, 2:].values
-        for r_idx, rid in ROW_MAP.items():
-            if r_idx < len(df_raw):
-                tot = pd.to_numeric(df_raw.iloc[r_idx, 1], errors='coerce')
-                for d_val, av in zip(dates_raw, df_raw.iloc[r_idx, 2:].values):
-                    d_obj = robust_date_parser(d_val)
-                    if d_obj is None: continue
-                    new_extracted.append({
-                        "Date": d_obj, "RoomID": rid,
-                        "Available": pd.to_numeric(av, errors='coerce'),
-                        "Total": tot, "Tag": date_tag
-                    })
-    if new_extracted:
-        new_df = pd.DataFrame(new_extracted)
-        if st.session_state.prev_df.empty:
+st.divider()
+    st.header("🔄 요금 에디터 연동")
+    st.info("요금 에디터 사이트에서 업로드하고 확정한 최신 데이터를 불러옵니다. (파일 별도 업로드 불필요)")
+    
+    if st.button("🚀 최신 데이터 동기화", type="primary", use_container_width=True):
+        with st.spinner("요금 에디터 데이터 불러오는 중..."):
             latest_db, save_dt = get_latest_snapshot()
+            
             if not latest_db.empty:
-                combined = pd.concat([new_df, latest_db]).drop_duplicates(subset=['Date', 'RoomID'], keep='first')
-                st.session_state.today_df = combined.sort_values(by=['Date', 'RoomID'])
-                st.session_state.prev_df = latest_db
-                st.session_state.compare_label = f"자동 DB 병합: {save_dt}"
+                st.session_state.today_df = latest_db.sort_values(by=['Date', 'RoomID'])
+                
+                # 어제 데이터(비교군) 가져오기 로직 (오늘 날짜 이전 스냅샷 중 가장 최신)
+                docs = db.collection("daily_snapshots").where("work_date", "<", date.today().strftime("%Y-%m-%d")).order_by("work_date", direction=firestore.Query.DESCENDING).limit(1).stream()
+                prev_found = False
+                for doc in docs:
+                    p_dict = doc.to_dict()
+                    p_df = pd.DataFrame(p_dict.get('data', []))
+                    if not p_df.empty and 'Date' in p_df.columns:
+                        p_df['Date'] = pd.to_datetime(p_df['Date']).dt.date
+                        st.session_state.prev_df = p_df
+                        prev_found = True
+                
+                if not prev_found:
+                    st.session_state.prev_df = pd.DataFrame()
+                    
+                st.session_state.compare_label = f"✅ 동기화 완료 (요금 에디터 기준: {save_dt})"
+                st.rerun()
             else:
-                st.session_state.today_df = new_df
-                st.session_state.prev_df = pd.DataFrame()
-                st.session_state.compare_label = "첫 업로드"
-        else:
-            combined = pd.concat([new_df, st.session_state.today_df]).drop_duplicates(subset=['Date', 'RoomID'], keep='first')
-            st.session_state.today_df = combined.sort_values(by=['Date', 'RoomID'])
+                st.warning("요금 에디터에 등록된 최신 데이터가 없습니다.")
 
 # ============================================================
 # 메인 영역
