@@ -963,6 +963,13 @@ def render_note_input(key_id, label="메모", notes=None, show_tag=True, widget_
 # ============================================================
 # 20. 기본 테이블 렌더러 (통합 관제 모드 추가)
 # ============================================================
+def get_bar_price(room_id, bar):
+    if bar == "BAR0":
+        if room_id in DYNAMIC_ROOMS: return PRICE_TABLE.get(room_id, {}).get("BAR0", 0)
+        else: return FIXED_BAR0_TABLE.get(room_id, 0)
+    if room_id in DYNAMIC_ROOMS: return PRICE_TABLE.get(room_id, {}).get(bar, 0)
+    else: return FIXED_PRICE_TABLE.get(room_id, {}).get(bar, 0)
+
 def render_master_table(current_df, prev_df, title="", mode="기준", applied_rates=None):
     if current_df.empty:
         return "<div style='padding:20px;'>데이터를 업로드하세요.</div>"
