@@ -134,6 +134,17 @@ FIXED_BAR0_TABLE = {"GDB": 298000, "GDF": 678000, "FFD": 704000, "FPT": 850000, 
 # ============================================================
 # 6. 로직 함수
 # ============================================================
+@st.cache_data(ttl=60)
+def load_applied_rates():
+    try:
+        docs = db.collection("applied_rates").stream()
+        result = {}
+        for doc in docs:
+            result[doc.id] = doc.to_dict()
+        return result
+    except Exception:
+        return {}
+
 def get_season_details(date_obj):
     m, d = date_obj.month, date_obj.day
     md = f"{m:02d}.{d:02d}"
@@ -204,6 +215,12 @@ def get_final_values(room_id, date_obj, avail, total, manual_bar=None):
         current_avail = 0.0
     occ = ((total - current_avail) / total * 100) if total > 0 else 0
 
+    # [핵심 수정] 다른 사이트에서 덮어씌운 '수동 확정 요금'이 있는지 체크해서 무조건 1순위로 적용
+    if not manual_bar:
+        applied_rates = load_applied_rates()
+        date_str = date_obj.strftime('%Y-%m-%d')
+        manual_bar = applied_rates.get(date_str, {}).get('rooms', {}).get(room_id)
+
     if manual_bar:
         bar = manual_bar
         if bar == "BAR0":
@@ -219,7 +236,7 @@ def get_final_values(room_id, date_obj, avail, total, manual_bar=None):
         bar = type_code
         price = FIXED_PRICE_TABLE.get(room_id, {}).get(type_code, 0)
     return occ, bar, price, False
-
+    
 # ============================================================
 # 7. 📝 메모 시스템 (completed 필드 추가)
 # ============================================================
