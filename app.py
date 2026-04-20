@@ -422,6 +422,7 @@ def get_sim_bar(room_id, date_obj, avail, total,
 # ============================================================
 # 11. 🚨 Fixed 수기 인상 알림 (과거/미래 분리)
 # ============================================================
+@st.cache_data(ttl=600, show_spinner=False) # ✨ 이 한 줄만 추가하세요!
 def get_fixed_room_alerts(current_df, events=None):
     if current_df.empty:
         return [], []
@@ -530,6 +531,7 @@ def get_market_price_for_date(target_date, df_flight, df_comp, search_date_str=N
 # ============================================================
 # 13. 기회비용 계산 (is_past 필드 추가)
 # ============================================================
+@st.cache_data(ttl=600, show_spinner=False) # ✨ 이 한 줄만 추가하세요!
 def calculate_opportunity_cost(current_df, df_flight, df_comp,
                                 josun_threshold, flight_threshold,
                                 search_date_str=None, events=None, sensitivity=None):
@@ -1845,6 +1847,9 @@ with st.sidebar:
     
     if st.button("🚀 최신 데이터 동기화", type="primary", use_container_width=True):
         with st.spinner("요금 에디터 데이터 불러오는 중..."):
+            
+            st.cache_data.clear() # ✨ 핵심: 동기화 누를 때 기존 캐시(메모리) 강제 삭제!
+            
             latest_db, save_dt = get_latest_snapshot()
             
             if not latest_db.empty:
