@@ -1226,7 +1226,7 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
         pdf.set_xy(25, y_box + 5)
         pdf.set_font(KFONT, 'B', 11)
         pdf.set_text_color(166, 138, 86)
-        pdf.cell(0, 7, T("💡 핵심 메시지", "💡 Key Message"), ln=True)
+        pdf.cell(0, 7, T("핵심 메시지", "Key Message"), ln=True)
         pdf.set_xy(25, pdf.get_y() + 1)
         pdf.set_font(KFONT, '', 10)
         pdf.set_text_color(60, 60, 60)
@@ -1351,7 +1351,7 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
             pdf.set_text_color(0, 0, 0)
             pdf.set_font(KFONT, 'B', 10)
             pdf.set_text_color(166, 138, 86)
-            pdf.cell(0, 7, T("▸ 시장 상황", "▸ Market Situation"), ln=True)
+            pdf.cell(0, 7, T("시장 상황", "Market Situation"), ln=True)
             pdf.set_font(KFONT, '', 10)
             pdf.set_text_color(60, 60, 60)
             pdf.multi_cell(0, 5, T(
@@ -1362,7 +1362,7 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
 
             pdf.set_font(KFONT, 'B', 10)
             pdf.set_text_color(166, 138, 86)
-            pdf.cell(0, 7, T("▸ 우리의 판단", "▸ Our Decision"), ln=True)
+            pdf.cell(0, 7, T("우리의 판단", "Our Decision"), ln=True)
             pdf.set_font(KFONT, '', 10)
             pdf.set_text_color(60, 60, 60)
             pdf.multi_cell(0, 5, T(
@@ -1374,7 +1374,7 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
 
             pdf.set_font(KFONT, 'B', 10)
             pdf.set_text_color(166, 138, 86)
-            pdf.cell(0, 7, T("▸ 시뮬레이터 제안", "▸ Simulator Recommendation"), ln=True)
+            pdf.cell(0, 7, T("시뮬레이터 제안", "Simulator Recommendation"), ln=True)
             pdf.set_font(KFONT, '', 10)
             pdf.set_text_color(60, 60, 60)
             pdf.multi_cell(0, 5, T(
@@ -1386,7 +1386,7 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
 
             pdf.set_font(KFONT, 'B', 10)
             pdf.set_text_color(166, 138, 86)
-            pdf.cell(0, 7, T("▸ 교훈", "▸ Lesson Learned"), ln=True)
+            pdf.cell(0, 7, T("교훈", "Lesson Learned"), ln=True)
             pdf.set_font(KFONT, '', 10)
             pdf.set_text_color(60, 60, 60)
             pdf.multi_cell(0, 5, T(
@@ -1471,7 +1471,7 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
         pdf.set_xy(25, y_box + 4)
         pdf.set_font(KFONT, 'B', 11)
         pdf.set_text_color(166, 138, 86)
-        pdf.cell(0, 6, T("💼 포지셔닝 분석", "💼 Positioning Analysis"), ln=True)
+        pdf.cell(0, 6, T("포지셔닝 분석", "Positioning Analysis"), ln=True)
         pdf.set_xy(25, pdf.get_y() + 2)
         pdf.set_font(KFONT, '', 10)
         pdf.set_text_color(60, 60, 60)
@@ -1605,7 +1605,7 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
     # 핵심 이슈
     pdf.set_font(KFONT, 'B', 13)
     pdf.set_text_color(198, 40, 40)
-    pdf.cell(0, 8, T("⚠️ 현재 정책의 3가지 문제점", "⚠️ Three Key Issues"), ln=True)
+    pdf.cell(0, 8, T("현재 정책의 3가지 문제점", "Three Key Issues"), ln=True)
     pdf.ln(2)
 
     issues = [
@@ -1633,17 +1633,17 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
     # 단기/중기/장기 계획
     pdf.set_font(KFONT, 'B', 13)
     pdf.set_text_color(46, 125, 50)
-    pdf.cell(0, 8, T("✅ 3단계 실행 로드맵", "✅ 3-Phase Roadmap"), ln=True)
+    pdf.cell(0, 8, T("3단계 실행 로드맵", "3-Phase Roadmap"), ln=True)
     pdf.ln(2)
 
     phases = [
-        (T("🚀 단기 (1주 이내)", "🚀 Short-term (1 week)"),
+        (T("단기 (1주 이내)", "Short-term (1 week)"),
          T("시뮬레이터 제안에 따라 시그널 발동 날짜의 ADR을 즉시 검토 및 조정. Dynamic 객실 5개 타입에 대해 시장 시그널 기반 일일 가격 모니터링 체계 가동.",
            "Review and adjust ADR for flagged dates. Activate daily monitoring.")),
-        (T("⚙️ 중기 (1개월)", "⚙️ Mid-term (1 month)"),
+        (T("중기 (1개월)", "Mid-term (1 month)"),
          T("객실 타입별 민감도 계수를 실제 결과에 맞춰 세밀 조정. 수기 인상 기준(전체 점유율 75%/85%)을 자동화된 알림 체계와 연동. 주간 단위 경영진 보고 정례화.",
            "Fine-tune sensitivity coefficients. Automate alerts. Weekly management reporting.")),
-        (T("🎯 장기 (1분기)", "🎯 Long-term (1 quarter)"),
+        (T("장기 (1분기)", "Long-term (1 quarter)"),
          T("경쟁사 벤치마크에 기반한 포지셔닝 재정립. 브랜드 프리미엄을 반영한 ADR 목표 설정. 70~80% 점유율 + 높은 ADR 전략으로 순수익 극대화 구조 확립.",
            "Repositioning based on benchmarks. Establish premium ADR targets.")),
     ]
@@ -1687,7 +1687,7 @@ def generate_pdf_report(opp_df, period_label, josun_threshold, flight_threshold,
 
     pdf.set_font(KFONT, 'B', 12)
     pdf.set_text_color(166, 138, 86)
-    pdf.cell(0, 8, T("💎 핵심 제언", "💎 Key Recommendations"), ln=True)
+    pdf.cell(0, 8, T("핵심 제언", "Key Recommendations"), ln=True)
     pdf.ln(2)
 
     pdf.set_font(KFONT, '', 10)
