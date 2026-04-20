@@ -2076,7 +2076,7 @@ if not st.session_state.today_df.empty:
     curr_ui = filter_df_by_dates(curr, visible_dates)
     prev_ui = filter_df_by_dates(prev, visible_dates) if not prev.empty else prev
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
         "📊 현황",
         "🔮 시뮬레이터",
         "💸 기회비용",
@@ -2086,7 +2086,8 @@ if not st.session_state.today_df.empty:
         "📅 주간 요약",
         "🎯 할 일",
         "📊 전년 비교",
-        "📄 PDF"
+        "📄 PDF",
+        "💡 종합 인사이트" # ✨ 11번째 탭 추가
     ])
 
     # =============== TAB 1: 현황 ===============
@@ -2743,6 +2744,145 @@ if not st.session_state.today_df.empty:
                             st.success("✅ 생성 완료!")
                         except Exception as e:
                             st.error(f"실패: {e}")
+
+# =============== TAB 11: 💡 종합 인사이트 (경영진 보고용) ===============
+    with tab11:
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, #1E3C72 0%, #2A5298 100%); 
+                    padding: 25px; border-radius: 12px; color: white; margin-bottom: 20px;'>
+            <h2 style='margin-top:0; color:#FFD700;'>💡 종합 수익 진단 리포트</h2>
+            <div style='font-size: 14px; opacity: 0.9;'>시스템 권장 vs 실제 의사결정을 종합하여 현재의 수익 관리 건전성을 진단합니다.</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if curr_ui.empty:
+            st.warning("데이터가 없습니다.")
+        else:
+            future_dates = sorted([d for d in curr_ui['Date'].unique() if d >= TODAY])
+            
+            # --- 1. 데이터 집계 (의사결정 성적표) ---
+            decision_counts = {'✅ 전략 일치': 0, '⭐ 수동 개입': 0, '⚠️ 수익 포기': 0, '🤖 변동 없음': 0}
+            
+            for d in future_dates:
+                date_str = d.strftime('%Y-%m-%d')
+                type_code, season, is_weekend = get_season_details(d)
+                
+                for rid in DYNAMIC_ROOMS:
+                    curr_match = curr_ui[(curr_ui['RoomID'] == rid) & (curr_ui['Date'] == d)]
+                    if curr_match.empty: continue
+                    
+                    avail = curr_match.iloc[0]['Available']
+                    total = curr_match.iloc[0]['Total']
+                    occ = ((total - avail) / total * 100) if total > 0 else 0
+                    
+                    pure_sys_bar = determine_bar(season, is_weekend, occ)
+                    
+                    prev_bar = None
+                    if not prev_ui.empty:
+                        prev_m = prev_ui[(prev_ui['RoomID'] == rid) & (prev_ui['Date'] == d)]
+                        if not prev_m.empty:
+                            _, prev_bar, _, _ = get_final_values(rid, d, prev_m.iloc[0]['Available'], prev_m.iloc[0]['Total'])
+                    
+                    current_cms_bar = prev_bar if prev_bar else pure_sys_bar
+                    applied_bar = applied_rates_data.get(date_str, {}).get('rooms', {}).get(rid) if applied_rates_data else None
+                    
+                    if applied_bar:
+                        if applied_bar == pure_sys_bar: decision_counts['✅ 전략 일치'] += 1
+                        else: decision_counts['⭐ 수동 개입'] += 1
+                    else:
+                        if pure_sys_bar != current_cms_bar: decision_counts['⚠️ 수익 포기'] += 1
+                        else: decision_counts['🤖 변동 없음'] += 1
+
+            # --- 2. 최상단 핵심 KPI ---
+            total_decisions = sum(decision_counts.values())
+            loss_rate = (decision_counts['⚠️ 수익 포기'] / total_decisions * 100) if total_decisions > 0 else 0
+            future_opp = alert_opp_df[alert_opp_df['날짜'] >= TODAY]['기회비용'].sum() if not alert_opp_df.empty else 0
+            
+            col_k1, col_k2, col_k3 = st.columns(3)
+            with col_k1:
+                st.markdown(f"""
+                <div style='background:#FFF; border-left:5px solid #D32F2F; padding:20px; border-radius:8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
+                    <div style='color:#666; font-size:14px; font-weight:bold;'>누수 중인 수익 (미래)</div>
+                    <div style='color:#D32F2F; font-size:28px; font-weight:bold; margin-top:5px;'>₩ {int(future_opp):,}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col_k2:
+                st.markdown(f"""
+                <div style='background:#FFF; border-left:5px solid #FF8F00; padding:20px; border-radius:8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
+                    <div style='color:#666; font-size:14px; font-weight:bold;'>수익 포기(미조치) 비율</div>
+                    <div style='color:#FF8F00; font-size:28px; font-weight:bold; margin-top:5px;'>{loss_rate:.1f}%</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with col_k3:
+                st.markdown(f"""
+                <div style='background:#FFF; border-left:5px solid #2E7D32; padding:20px; border-radius:8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);'>
+                    <div style='color:#666; font-size:14px; font-weight:bold;'>수동 개입/전략 일치</div>
+                    <div style='color:#2E7D32; font-size:28px; font-weight:bold; margin-top:5px;'>{decision_counts['⭐ 수동 개입']}건 / {decision_counts['✅ 전략 일치']}건</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # --- 3. 시각화 대시보드 ---
+            col_c1, col_c2 = st.columns(2)
+            
+            # 도넛 차트: 의사결정 상태
+            with col_c1:
+                st.subheader("🎯 의사결정 포트폴리오 (미래)")
+                df_pie = pd.DataFrame(list(decision_counts.items()), columns=['상태', '건수'])
+                df_pie = df_pie[df_pie['건수'] > 0]
+                
+                color_map = {
+                    '✅ 전략 일치': '#4CAF50', '⭐ 수동 개입': '#FF9800',
+                    '⚠️ 수익 포기': '#F44336', '🤖 변동 없음': '#E0E0E0'
+                }
+                
+                fig_pie = px.pie(df_pie, values='건수', names='상태', hole=0.4,
+                                 color='상태', color_discrete_map=color_map)
+                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                fig_pie.update_layout(showlegend=False, height=350, margin=dict(t=30, b=0, l=0, r=0))
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            # 바 차트: 기회비용 취약점 (어디서 돈이 새고 있나?)
+            with col_c2:
+                st.subheader("🚨 객실별 수익 누수 현황")
+                if not alert_opp_df.empty:
+                    future_opp_df = alert_opp_df[alert_opp_df['날짜'] >= TODAY]
+                    room_loss = future_opp_df.groupby('객실타입')['기회비용'].sum().reset_index()
+                    room_loss = room_loss[room_loss['기회비용'] > 0].sort_values('기회비용', ascending=True)
+                    
+                    if not room_loss.empty:
+                        fig_bar = px.bar(room_loss, x='기회비용', y='객실타입', orientation='h',
+                                         text_auto='.2s', color='기회비용', color_continuous_scale='Reds')
+                        fig_bar.update_layout(showlegend=False, height=350, margin=dict(t=30, b=0, l=0, r=0),
+                                              xaxis_title="누수액 (KRW)", yaxis_title="")
+                        st.plotly_chart(fig_bar, use_container_width=True)
+                    else:
+                        st.info("현재 새어나가는 수익(기회비용)이 없습니다. 완벽합니다!")
+                else:
+                    st.info("시뮬레이터 데이터가 없습니다.")
+
+            st.divider()
+
+            # --- 4. 자동 생성 결론 브리핑 ---
+            st.subheader("📝 AI 종합 진단 결론")
+            
+            diagnosis_msg = ""
+            if loss_rate > 30:
+                diagnosis_msg = f"<span style='color:#D32F2F; font-weight:bold;'>🔴 위험:</span> 전체 타겟 일정의 {loss_rate:.1f}%가 시스템이 인상을 권고했음에도 방치되어 <b>'수익 포기(⚠️)'</b> 상태에 있습니다. 점유율 채우기에 매몰되어 ADR 상향 기회를 잃고 있으며, 즉각적인 요금 오버라이드 조치가 시급합니다."
+            elif loss_rate > 10:
+                diagnosis_msg = f"<span style='color:#FF8F00; font-weight:bold;'>🟡 주의:</span> 일정 부분({loss_rate:.1f}%)에서 시장 강세를 반영하지 못한 '수익 포기'가 발생하고 있습니다. 의도적인 홀딩이 아니라면 놓친 날짜들을 점검하여 기회비용(₩{int(future_opp):,})을 회수해야 합니다."
+            else:
+                diagnosis_msg = f"<span style='color:#2E7D32; font-weight:bold;'>🟢 우수:</span> 수익 포기 비율이 {loss_rate:.1f}%로 매우 낮으며, 시장 시그널과 RM 의사결정이 긴밀하게 동기화되어 수익을 극대화하고 있습니다."
+
+            st.markdown(f"""
+            <div style='background:#F8F9FA; border-left:4px solid #1E3C72; padding:20px; font-size:15px; line-height:1.6;'>
+                <b>1. 현재 상황 요약:</b><br>
+                미래 일정에 대해 총 <b>{total_decisions}건</b>의 가격 판단이 이루어지고 있으며, 이 중 우리가 시장 논리에 맞춰 선제적으로 개입(전략 일치 및 수동 개입)한 비율은 <b>{((decision_counts['✅ 전략 일치'] + decision_counts['⭐ 수동 개입']) / total_decisions * 100) if total_decisions > 0 else 0:.1f}%</b>입니다.<br><br>
+                <b>2. 진단 결과:</b><br>
+                {diagnosis_msg}
+            </div>
+            """, unsafe_allow_html=True)
 
 else:
     st.info("👈 사이드바에서 잔여객실 파일을 업로드하세요.")
