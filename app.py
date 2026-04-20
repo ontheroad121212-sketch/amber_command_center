@@ -961,14 +961,21 @@ def render_note_input(key_id, label="메모", notes=None, show_tag=True, widget_
             st.rerun()
 
 # ============================================================
-# 20. 기본 테이블 렌더러 (과거 날짜 회색 처리)
+# 20. 기본 테이블 렌더러 (통합 관제 모드 추가)
 # ============================================================
-def render_master_table(current_df, prev_df, title="", mode="기준"):
+def render_master_table(current_df, prev_df, title="", mode="기준", applied_rates=None):
     if current_df.empty:
         return "<div style='padding:20px;'>데이터를 업로드하세요.</div>"
     dates = sorted(current_df['Date'].unique())
     row_padding = "8px"; header_padding = "5px"; font_size = "11px"
-    html = f"<div style='margin-top:40px; margin-bottom:10px; font-weight:bold; font-size:18px; padding:10px; background:#f0f2f6; border-left:10px solid #000;'>{title}</div>"
+    
+    # 타이틀 테마 색상
+    if mode == "통합관제":
+        bg_title = "#FFF8E1"; border_title = "#FF8F00"
+    else:
+        bg_title = "#f0f2f6"; border_title = "#000"
+        
+    html = f"<div style='margin-top:40px; margin-bottom:10px; font-weight:bold; font-size:18px; padding:10px; background:{bg_title}; border-left:10px solid {border_title};'>{title}</div>"
     html += "<div style='overflow-x: auto; white-space: nowrap; border: 1px solid #ddd;'>"
     html += f"<table style='width:100%; border-collapse:collapse; font-size:{font_size}; min-width:1000px;'>"
     html += "<thead><tr style='background:#f9f9f9;'>"
@@ -988,25 +995,39 @@ def render_master_table(current_df, prev_df, title="", mode="기준"):
         past_style = "background:#EEEEEE;" if is_past else ""
         html += f"<th style='border:1px solid #ddd; padding:{header_padding}; color:{color}; {past_style}'>{wd}</th>"
     html += "</tr></thead><tbody>"
+    
     for rid in ALL_ROOMS:
         label = f"<b>{rid}</b>" if rid in ["HDF", "PPV"] else rid
         border_thick = "border-bottom:3.4px solid #000;" if rid in ["HDF", "PPV"] else ""
         html += f"<tr style='{border_thick}'><td style='border:1px solid #ddd; padding:{row_padding}; background:#fff; border-right:4px solid #000; position:sticky; left:0; z-index:1;'>{label}</td>"
+        
         for d in dates:
             is_past = d < TODAY
+            date_str = d.strftime('%Y-%m-%d')
             curr_match = current_df[(current_df['RoomID'] == rid) & (current_df['Date'] == d)]
             if curr_match.empty:
                 html += f"<td style='border:1px solid #ddd; padding:{row_padding}; text-align:center;'>-</td>"
                 continue
+            
             avail = curr_match.iloc[0]['Available']; total = curr_match.iloc[0]['Total']
-            occ, bar, base_price, _ = get_final_values(rid, d, avail, total)
+            occ = ((total - avail) / total * 100) if total > 0 else 0
+            
+            # [핵심] 통합관제를 위해 순수 시스템 권장가를 따로 도출
+            type_code, season, is_weekend = get_season_details(d)
+            pure_sys_bar = determine_bar(season, is_weekend, occ) if rid in DYNAMIC_ROOMS else type_code
+            
+            # get_final_values 호출 (여기에 이미 오버라이드 값이 섞여 나옴)
+            _, bar, base_price, _ = get_final_values(rid, d, avail, total)
+            
             prev_bar, prev_avail = None, None
             if not prev_df.empty:
                 prev_m = prev_df[(prev_df['RoomID'] == rid) & (prev_df['Date'] == d)]
                 if not prev_m.empty:
                     prev_avail = prev_m.iloc[0]['Available']
                     _, prev_bar, _, _ = get_final_values(rid, d, prev_avail, prev_m.iloc[0]['Total'])
+                    
             style = f"border:1px solid #ddd; padding:{row_padding}; text-align:center; background-color:white;"
+            
             if mode == "기준":
                 bg = BAR_GRADIENT_COLORS.get(bar, "#FFFFFF") if rid in DYNAMIC_ROOMS or bar == "BAR0" else "#F1F1F1"
                 style += f"background-color: {bg};"
@@ -1014,6 +1035,38 @@ def render_master_table(current_df, prev_df, title="", mode="기준"):
                     content = f"<b>{bar}</b><br>{base_price:,}<br>{occ:.0f}%<br><span style='font-size:8px; color:#666;'>📜마감</span>"
                 else:
                     content = f"<b>{bar}</b><br>{base_price:,}<br>{occ:.0f}%"
+                    
+            elif mode == "통합관제":
+                applied_bar = applied_rates.get(date_str, {}).get('rooms', {}).get(rid) if applied_rates else None
+                is_applied = applied_bar is not None
+                
+                final_bar = applied_bar if is_applied else pure_sys_bar
+                final_price = get_bar_price(rid, final_bar)
+                
+                bg = BAR_GRADIENT_COLORS.get(final_bar, "#FFFFFF") if rid in DYNAMIC_ROOMS or final_bar == "BAR0" else "#F1F1F1"
+                
+                if is_past:
+                    style += f"background-color: {bg}; opacity: 0.6;"
+                    content = f"<b>{final_bar}</b><br>{final_price:,}<br><span style='font-size:8px; color:#444;'>📜마감</span>"
+                else:
+                    if is_applied:
+                        if applied_bar == pure_sys_bar:
+                            # 수동으로 확정했는데, 권장가랑 똑같음
+                            style += f"background-color: {bg}; border: 2.5px solid #2E7D32;"
+                            content = f"<div style='font-size:9px; color:#2E7D32; font-weight:bold; margin-bottom:2px;'>✅ 전략 일치</div>"
+                            content += f"<b>{final_bar}</b><br>{final_price:,}<br>{occ:.0f}%"
+                        else:
+                            # 시스템은 올리라 했는데 안 올렸거나(무시), 더 올린 경우
+                            style += f"background-color: {bg}; border: 2.5px dashed #D32F2F;"
+                            content = f"<div style='font-size:9px; color:#D32F2F; font-weight:bold; margin-bottom:2px;'>⭐ 수동 오버라이드</div>"
+                            content += f"<b>{final_bar}</b><br>{final_price:,}<br>{occ:.0f}%<br>"
+                            content += f"<div style='font-size:10px; color:#333; margin-top:3px; background:rgba(255,255,255,0.7); padding:2px; border-radius:3px;'>💡권장: <del>{pure_sys_bar}</del></div>"
+                    else:
+                        # 손 안 댄 경우 (시스템 자동 연동)
+                        style += f"background-color: {bg}; opacity: 0.9;"
+                        content = f"<div style='font-size:9px; color:#757575; font-weight:bold; margin-bottom:2px;'>🤖 자동 반영</div>"
+                        content += f"<b>{final_bar}</b><br>{final_price:,}<br>{occ:.0f}%"
+                        
             elif mode == "변화":
                 curr_av = float(avail) if pd.notna(avail) else 0.0
                 prev_av = float(prev_avail) if (prev_avail is not None and pd.notna(prev_avail)) else 0.0
@@ -1031,6 +1084,7 @@ def render_master_table(current_df, prev_df, title="", mode="기준"):
                         style += "color:blue; font-weight:bold;"
                         content = f"{pickup:.0f}"
                     else: content = "-"
+                    
             elif mode == "판도변화":
                 curr_b = str(bar).strip() if bar else ""
                 prev_b = str(prev_bar).strip() if prev_bar else ""
@@ -1042,6 +1096,7 @@ def render_master_table(current_df, prev_df, title="", mode="기준"):
                     style += f"background-color: {bg}; color: white; font-weight: bold; border: 2.5px solid #000;"
                     content = f"▲ {bar}"
                 else: content = bar
+                
             html += f"<td style='{style}'>{content}</td>"
         html += "</tr>"
     html += "</tbody></table></div>"
@@ -2012,9 +2067,15 @@ if not st.session_state.today_df.empty:
 
     # =============== TAB 1: 현황 ===============
     with tab1:
-        st.markdown(render_master_table(curr_ui, prev_ui, title="📊 1. BAR 요금 현황 (📜 회색 = 지난 날짜)", mode="기준"), unsafe_allow_html=True)
-        st.markdown(render_master_table(curr_ui, prev_ui, title="📈 2. 예약 변화량", mode="변화"), unsafe_allow_html=True)
-        st.markdown(render_master_table(curr_ui, prev_ui, title="🔔 3. 판도 변화", mode="판도변화"), unsafe_allow_html=True)
+        applied_rates_data = load_applied_rates()
+        
+        st.markdown(render_master_table(curr_ui, prev_ui, applied_rates=applied_rates_data, title="🎯 1. 통합 관제 보드 (권장 vs 수동개입 vs 최종요금)", mode="통합관제"), unsafe_allow_html=True)
+        st.markdown(render_master_table(curr_ui, prev_ui, title="📈 2. 예약 변화량 (픽업)", mode="변화"), unsafe_allow_html=True)
+        
+        # 덜 중요한 원시 데이터들은 접어둡니다.
+        with st.expander("🔍 순수 시스템 권장가 및 판도 변화 보기 (원시 데이터)"):
+            st.markdown(render_master_table(curr_ui, prev_ui, title="📊 시장 분석 (순수 시스템 권장)", mode="기준"), unsafe_allow_html=True)
+            st.markdown(render_master_table(curr_ui, prev_ui, title="🔔 판도 변화", mode="판도변화"), unsafe_allow_html=True)
 
         st.divider()
         st.subheader("📝 날짜별 메모")
