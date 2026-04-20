@@ -907,6 +907,31 @@ def get_latest_snapshot():
     return pd.DataFrame(), None
 
 # ============================================================
+# 18-A. UI 필터용 헬퍼 함수 (신규 추가)
+# ============================================================
+def date_filter_toggle(key_prefix, total_dates, default_show_past=False):
+    past_count = sum(1 for d in total_dates if d < TODAY)
+    future_count = len(total_dates) - past_count
+    
+    if past_count == 0:
+        return total_dates
+    
+    show_past = st.checkbox(
+        f"📜 과거 {past_count}일 포함 (현재 미래 {future_count}일만 표시)",
+        value=default_show_past,
+        key=f"show_past_{key_prefix}"
+    )
+    
+    if show_past:
+        return total_dates
+    else:
+        return [d for d in total_dates if d >= TODAY]
+
+def filter_df_by_dates(df, visible_dates):
+    if df.empty: return df
+    return df[df['Date'].isin(visible_dates)].copy()
+
+# ============================================================
 # 19. 메모 입력 위젯
 # ============================================================
 def render_note_input(key_id, label="메모", notes=None, show_tag=True, widget_prefix=""):
@@ -2012,6 +2037,22 @@ if not st.session_state.today_df.empty:
     if st.session_state.compare_label:
         st.info(f"ℹ️ {st.session_state.compare_label}")
 
+    # ----------------------------------------------------
+    # [신규 추가] 표 표시용 날짜 필터 (탭 메뉴 바로 위에 배치)
+    # ----------------------------------------------------
+    all_dates = sorted(curr['Date'].unique())
+    st.markdown(f"""
+    <div style='background:#E3F2FD; padding:10px 15px; border-radius:8px; margin:15px 0; 
+                border-left:5px solid #1976D2;'>
+        📅 <b>오늘 기준:</b> {TODAY.strftime('%Y-%m-%d')} ({WEEKDAYS_KR[TODAY.weekday()]}) · 
+        기본적으로 <b>오늘 이후</b>만 표시됩니다. 과거를 보려면 아래 체크박스를 활성화하세요.
+    </div>
+    """, unsafe_allow_html=True)
+    
+    visible_dates = date_filter_toggle("v8_main", all_dates, default_show_past=False)
+    curr_ui = filter_df_by_dates(curr, visible_dates)
+    prev_ui = filter_df_by_dates(prev, visible_dates) if not prev.empty else prev
+
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
         "📊 현황",
         "🔮 시뮬레이터",
@@ -2027,9 +2068,9 @@ if not st.session_state.today_df.empty:
 
     # =============== TAB 1: 현황 ===============
     with tab1:
-        st.markdown(render_master_table(curr, prev, title="📊 1. BAR 요금 현황 (📜 회색 = 지난 날짜)", mode="기준"), unsafe_allow_html=True)
-        st.markdown(render_master_table(curr, prev, title="📈 2. 예약 변화량", mode="변화"), unsafe_allow_html=True)
-        st.markdown(render_master_table(curr, prev, title="🔔 3. 판도 변화", mode="판도변화"), unsafe_allow_html=True)
+        st.markdown(render_master_table(curr_ui, prev_ui, title="📊 1. BAR 요금 현황 (📜 회색 = 지난 날짜)", mode="기준"), unsafe_allow_html=True)
+        st.markdown(render_master_table(curr_ui, prev_ui, title="📈 2. 예약 변화량", mode="변화"), unsafe_allow_html=True)
+        st.markdown(render_master_table(curr_ui, prev_ui, title="🔔 3. 판도 변화", mode="판도변화"), unsafe_allow_html=True)
 
         st.divider()
         st.subheader("📝 날짜별 메모")
@@ -2058,7 +2099,7 @@ if not st.session_state.today_df.empty:
             st.info(f"📜 회색 = 이미 마감된 날짜")
 
         sim_html = render_sim_comparison_table(
-            curr, df_flight_all, df_comp_all,
+            curr_ui, df_flight_all, df_comp_all,
             josun_threshold, flight_threshold,
             active_search_date, events=all_events, sensitivity=sensitivity
         )
